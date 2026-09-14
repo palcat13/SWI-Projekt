@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.db import IntegrityError, transaction
 
-from reservations.models import Reservation, ReservationStatus
+from reservations.models import Activity, Reservation, ReservationStatus
 
 
 @pytest.mark.django_db
@@ -17,6 +17,7 @@ def test_reservation_round_trip_through_database(companion, customer):
         customer=customer,
         start_at=start,
         end_at=start + timedelta(hours=2),
+        activity=Activity.WALK,
         status=ReservationStatus.PENDING_APPROVAL,
     )
 
@@ -26,6 +27,7 @@ def test_reservation_round_trip_through_database(companion, customer):
     assert loaded.id == created.id
     assert loaded.companion.display_name == "Alice"
     assert loaded.customer.username == "customer"
+    assert loaded.activity == Activity.WALK
     assert loaded.status == ReservationStatus.PENDING_APPROVAL
     assert loaded.start_at == start
     assert loaded.start_at.tzinfo is not None

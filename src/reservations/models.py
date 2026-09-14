@@ -24,6 +24,13 @@ class ReservationStatus(models.TextChoices):
     CANCELLED = "CANCELLED", "Cancelled"
 
 
+class Activity(models.TextChoices):
+    DINNER = "DINNER", "Dinner"
+    EVENT = "EVENT", "Event"
+    WALK = "WALK", "Walk"
+    OTHER = "OTHER", "Other"
+
+
 class Reservation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     companion = models.ForeignKey(Companion, on_delete=models.PROTECT, related_name="reservations")
@@ -32,7 +39,8 @@ class Reservation(models.Model):
     )
     start_at = models.DateTimeField()
     end_at = models.DateTimeField()
-    status = models.CharField(
+    activity = models.CharField(max_length=20, choices=Activity.choices, default=Activity.OTHER)
+    status =models.CharField(
         max_length=20, choices=ReservationStatus.choices, default=ReservationStatus.DRAFT
     )
     created_at = models.DateTimeField(auto_now_add=True)
