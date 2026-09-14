@@ -1,0 +1,182 @@
+SWI C01 — Reservation System: Start the Engineering Project
+
+Tým 3–4 studenti · pracovní blok 90 minut · deadline před C02
+Deadline: před začátkem C02.
+Nemusíte všechno dokončit během 90 minut C01. Na cvičení udělejte maximum. Všechny povinné výstupy a celý Definition of Done musí být hotové před začátkem vašeho C02. C02 předpokládá, že C01 je dokončeno.
+ 
+
+Výsledek C01: společný repo, jasně vymezený rezervační systém, Project Frame, jedna review smyčka, jeden skutečně provedený engineering spike, evidence a definovaný walking skeleton pro CP1.
+
+Rozsah implementace v C01:
+V C01 nemusíte implementovat celý reservation system. Operace, stavy a pravidla níže definují zamýšlený rozsah systému pro další týdny. V C01 musí být technicky skutečně provedena pouze jedna zvolená engineering spike.
+
+Do C02 tedy musí být:
+
+    celý minimální reservation domain definovaný;
+    repo a project skeleton připravený;
+    jedna engineering spike skutečně provedena a ověřena;
+    CP1 walking skeleton pouze definovaný.
+
+Walking skeleton musí být skutečně runnable až po C03 / před C04.
+1 Vytvořte tým a repo
+
+    3–4 studenti.
+    Jeden společný repozitář.
+    Všichni členové mají přístup.
+
+Povinný výstup do C02: název týmu + členové + URL repozitáře.
+ 
+2 Zvolte, co rezervujete
+
+Typ systému je pro všechny stejný: reservation system. Volíte pouze rezervovaný resource.
+
+Příklady: místnost, laboratorní zařízení, auto, sportoviště, parkovací místo, nabíjecí stanice, konzultační termín, sdílený nástroj.
+Povinný prvek 	Minimum
+Resource 	co se rezervuje
+Reservation 	identita, čas/slot, stav
+User 	kdo rezervaci vytváří
+States 	např. DRAFT / CONFIRMED / CANCELLED
+Operations 	create, confirm/approve, cancel, check availability
+Common rule 	dvě potvrzené rezervace stejného resource se nesmí překrývat
+Boundary 	alespoň jedna dependency; defaultně Notification Service
+
+Přidejte jedno vlastní domain-specific business rule.
+Povinný výstup do C02: konkrétní reservation domain + jedno vlastní business rule.
+ 
+3 Připravte repozitář
+
+README.md
+docs/
+  intent-and-change.md
+  architecture-and-decisions.md
+  evidence-and-evolution.md
+src/  (nebo odpovídající adresář)
+
+Podporovaný stack: např. Java 21 + Spring Boot + Maven + PostgreSQL + JUnit. Jakýkoliv stack je povolen, ale tým si jej podporuje sám a zdůvodní své rozhodnutí.
+Povinný výstup do C02: repo existuje a lze do něj commitovat.
+ 
+4 Vyplňte Project Frame
+
+Do docs/intent-and-change.md vložte a vyplňte:
+
+# Project Frame
+
+## Reservation domain
+Co konkrétně rezervujeme?
+
+## Purpose
+2–3 věty: komu systém slouží a proč.
+
+## Users / Stakeholders
+1–3 role.
+
+## Core concepts
+Reservation, Resource, User + případně 0–3 další pojmy.
+
+## Core operations
+- Create reservation
+- Confirm / approve reservation
+- Cancel reservation
+- Check availability
+
+## Persistent state
+Co ukládáme o Reservation a Resource.
+
+## State-changing operation
+Např. DRAFT → CONFIRMED.
+
+## Common business rule
+Confirmed reservations for the same resource must not overlap.
+
+## Domain-specific business rule
+Jedno vlastní pravidlo.
+
+## External / system boundary
+Jedna dependency. Defaultně Notification Service.
+
+## Assumption
+Jedna věc, kterou nyní považujete za pravdivou, ale není jistota.
+
+## Unknown
+Jedna důležitá věc, kterou nyní nevíte.
+
+Povinný výstup do C02: všechny položky Project Frame jsou vyplněny.
+ 
+5 Vyberte jednu future pressure
+Q 	Quality / Scale — např. 10× více souběžných rezervací.
+C 	Changeability — nový stav, provider, typ resource nebo pravidlo.
+R 	Risk / Higher consequence — chyba začne mít výrazně větší dopad.
+L 	Release / Operation — config/schema/rollback/incident.
+
+## Selected future pressure
+Category: Q / C / R / L
+Concrete pressure:
+Why it is relevant to our reservation system:
+
+Povinný výstup do C02: právě jedna konkrétní pressure + zdůvodnění. V C01 ji ještě neimplementujete.
+ 
+6 Proveďte jednu change + review smyčku
+
+    Vytvořte issue/task C01 engineering spike.
+    Jeden člen provede změnu.
+    Jiný člen ji před integrací zkontroluje.
+    Změnu integrujte.
+
+Povinný výstup do C02: konkrétní integrovaná změna, kterou před integrací viděl druhý člen týmu.
+ 
+7 Proveďte jeden engineering spike
+
+Vyberte právě jednu variantu:
+A — Persistence 	Reservation → skutečná DB → načtení → ověření. 	running code + test/příkaz
+B — Boundary failure 	Notification Service/stub → success → timeout/failure. 	test/script pro oba případy
+C — Reproducible build/config 	clean checkout druhým členem → build/test/run jen podle README → oprava překážky. 	README + úspěšný build/run
+Neplatí jako spike: pouze popis, diagram, neověřené README nebo kód, který nikdo nespustil.
+Povinný výstup do C02: jeden spike byl skutečně proveden a evidence je v repo.
+ 
+8 Zapište evidence a decision
+
+Do docs/evidence-and-evolution.md:
+
+# C01 Engineering Spike
+Question / unknown:
+What we did:
+Observed result:
+Decision / what changes because of the result:
+
+Povinný výstup do C02: všechny čtyři položky jsou konkrétně vyplněny.
+ 
+9 Definujte CP1 walking skeleton
+
+Do README napište jednu end-to-end cestu, která bude skutečně runnable po C03 / před C04.
+
+## CP1 walking skeleton
+POST /reservations
+→ validate
+→ persist
+→ return reservation ID
+→ automated check
+
+Povinný výstup do C02: walking skeleton je konkrétně definován. Ještě nemusí být celý implementovaný.
+ 
+10 Definition of Done před C02
+tým 3–4 členové
+společný repo
+jasný reservation domain
+Resource + Reservation + User
+meaningful Reservation states
+create + confirm/approve + cancel + availability
+common overlap rule
+1 domain-specific business rule
+1 external/system boundary
+kompletní Project Frame
+1 Q/C/R/L future pressure
+1 reviewed and integrated change
+1 executed engineering spike
+spike evidence + decision
+definovaný CP1 walking skeleton
+ 
+Všech 15 položek musí být splněno před začátkem C02.
+ 
+AI policy
+
+AI můžete používat. Použití AI se při projektové práci nekontroluje ani nehodnotí. Vygenerovaný výstup se počítá pouze tehdy, když splní stejné technické podmínky jako cokoli jiného.
