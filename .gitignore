@@ -17,6 +17,7 @@ __pycache__/
 htmlcov/
 dist/
 build/
+db.sqlite3
 
 # Java / Maven / Gradle
 target/

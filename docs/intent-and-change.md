@@ -10,9 +10,9 @@ TODO — 2–3 sentences: who the system serves and why.
 TODO — 1–3 roles.
 
 ## Core concepts
-- **Reservation** — TODO
-- **Resource (Companion)** — TODO
-- **User (Customer)** — TODO
+- **Reservation** — a request to spend a specific time slot (`start_at`–`end_at`) with one companion; it has an identity (UUID), a state and an owner (customer).
+- **Resource (Companion)** — a person offering their time; has their own user account (so they can approve reservations) and can be active or inactive.
+- **User (Customer)** — a registered user who creates reservations.
 
 ## Core operations
 - Create reservation
@@ -21,7 +21,13 @@ TODO — 1–3 roles.
 - Check availability
 
 ## Persistent state
-TODO — what is stored about Reservation and Resource.
+**Reservation:** `id` (UUID), `companion` (FK → Companion), `customer` (FK → User), `start_at`, `end_at` (timezone-aware, stored in UTC), `status` (`DRAFT` / `PENDING_APPROVAL` / `CONFIRMED` / `CANCELLED`), `created_at`, `updated_at`.
+
+**Companion (Resource):** `id`, `user` (1:1 → User), `display_name`, `bio`, `is_active`, `created_at`.
+
+**User:** Django `auth.User` (username, e-mail, password hash, …).
+
+Storage: SQLite through the Django ORM + migrations (see `docs/architecture-and-decisions.md`, D3).
 
 ## State-changing operation
 Reservation states: `DRAFT`, `PENDING_APPROVAL`, `CONFIRMED`, `CANCELLED`.
@@ -39,7 +45,7 @@ Confirmed reservations for the same resource must not overlap.
 A reservation can move to CONFIRMED only after the booked companion explicitly approves it. Neither the customer nor the system can confirm a reservation on the companion's behalf.
 
 ## External / system boundary
-TODO — default: Notification Service.
+**Notification Service** — notifies the companion that a new reservation is waiting for approval, and notifies the customer when a reservation is confirmed or cancelled. The reservation system calls it; a failure or timeout of the notification must not roll back the change of the reservation's state. Not implemented in CP1; will be accessed through an interface so it can be stubbed.
 
 ## Assumption
 TODO

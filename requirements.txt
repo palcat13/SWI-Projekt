@@ -1,0 +1,4 @@
+Django~=5.2
+djangorestframework~=3.16
+pytest~=8.3
+pytest-django~=4.11
