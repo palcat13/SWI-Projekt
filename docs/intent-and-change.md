@@ -4,15 +4,18 @@
 Booking a companion for a time-boxed social activity (non-sexual companionship).
 
 ## Purpose
-TODO — 2–3 sentences: who the system serves and why.
+The system lets customers book a companion for a time-boxed social activity such as a dinner, a wedding or a cultural event. Companions keep control over their time by approving each booking. The system prevents double-booking of a companion.
 
 ## Users / Stakeholders
-TODO — 1–3 roles.
+- **Customer** — creates and cancels reservations.
+- **Companion** — approves or cancels reservations of their own time.
+- **Administrator** — manages companion profiles.
 
 ## Core concepts
-- **Reservation** — TODO
-- **Resource (Companion)** — TODO
-- **User (Customer)** — TODO
+- **Reservation** — booking of one companion by one customer for a time slot; has a state.
+- **Resource (Companion)** — a person offering companionship who can be booked.
+- **User (Customer)** — a registered person who creates reservations.
+- **Activity** — type of occasion (dinner, event, walk).
 
 ## Core operations
 - Create reservation
@@ -21,7 +24,8 @@ TODO — 1–3 roles.
 - Check availability
 
 ## Persistent state
-TODO — what is stored about Reservation and Resource.
+- **Reservation:** id, companion_id, customer_id, start_time, end_time, activity, state, created_at, updated_at
+- **Companion:** id, display_name, active
 
 ## State-changing operation
 Reservation states: `DRAFT`, `PENDING_APPROVAL`, `CONFIRMED`, `CANCELLED`.
@@ -39,16 +43,18 @@ Confirmed reservations for the same resource must not overlap.
 A reservation can move to CONFIRMED only after the booked companion explicitly approves it. Neither the customer nor the system can confirm a reservation on the companion's behalf.
 
 ## External / system boundary
-TODO — default: Notification Service.
+**Notification Service** — notifies the companion when a reservation is waiting for approval, and the customer when it is confirmed or cancelled.
 
 ## Assumption
-TODO
+Companions respond to a pending reservation within 24 hours.
 
 ## Unknown
-TODO
+What should happen to a `PENDING_APPROVAL` reservation when the companion never responds — should it expire automatically, and after how long?
 
 # Selected future pressure
 
-Category: TODO (Q / C / R / L)
-Concrete pressure: TODO
-Why it is relevant to our reservation system: TODO
+Category: C (Changeability)
+
+Concrete pressure: Pending reservations that the companion does not approve within 24 h must expire automatically (new state `EXPIRED`).
+
+Why it is relevant to our reservation system: The approval step is the core of our domain. A new state affects the state machine, the availability check and the notifications.

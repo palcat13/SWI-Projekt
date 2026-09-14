@@ -1,11 +1,11 @@
-# SWI-Projekt — Companion Reservation System
+# Rent-a-Partner
 
 Reservation system for booking a companion for social activities (non-sexual companionship, modeled after rental-companion services such as "rent-a-girlfriend").
 
 ## Team
 
-- **Team name:** TODO
-- **Members:** TODO (3–4 students)
+- **Team name:** Rent-a-Partner
+- **Members:** Pavel Marszalek, Tobias Janča
 - **Repository:** https://github.com/palcat13/SWI-Projekt
 
 ## Documentation
