@@ -17,8 +17,9 @@ class ReservationCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Reservation
-        fields = ["id", "companion_id", "customer_id", "start_at", "end_at", "status"]
+        fields = ["id", "companion_id", "customer_id", "start_at", "end_at", "activity", "status"]
         read_only_fields = ["id", "status"]
+        extra_kwargs = {"activity": {"required": True}}
 
     def validate(self, attrs):
         if attrs["start_at"] >= attrs["end_at"]:

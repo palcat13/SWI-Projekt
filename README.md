@@ -1,11 +1,11 @@
-# SWI-Projekt — Companion Reservation System
+# Rent-a-Partner
 
 Reservation system for booking a companion for social activities (non-sexual companionship, modeled after rental-companion services such as "rent-a-girlfriend").
 
 ## Team
 
-- **Team name:** TODO
-- **Members:** TODO (3–4 students)
+- **Team name:** Rent-a-Partner
+- **Members:** Pavel Marszalek, Tobias Janča
 - **Repository:** https://github.com/palcat13/SWI-Projekt
 
 ## Documentation
@@ -64,7 +64,7 @@ print('companion_id', companion.pk, 'customer_id', customer.pk)
 
 curl -X POST http://127.0.0.1:8000/reservations \
   -H 'Content-Type: application/json' \
-  -d '{"companion_id": 1, "customer_id": 1, "start_at": "2027-10-01T18:00:00+02:00", "end_at": "2027-10-01T20:00:00+02:00"}'
+  -d '{"companion_id": 1, "customer_id": 1, "start_at": "2027-10-01T18:00:00+02:00", "end_at": "2027-10-01T20:00:00+02:00", "activity": "DINNER"}'
 # → 201 {"id": "<uuid>", "status": "DRAFT"}
 ```
 
@@ -82,8 +82,8 @@ POST /reservations
 
 | Step | Concretely |
 |---|---|
-| **Request** | `POST /reservations`, JSON body `{"companion_id": int, "customer_id": int, "start_at": ISO-8601 datetime, "end_at": ISO-8601 datetime}` |
-| **Validate** | `ReservationCreateSerializer` (`src/reservations/serializers.py`): all fields required; companion exists and `is_active`; customer (user) exists; `start_at < end_at`; `start_at` in the future; a companion cannot book themselves. Failure → `400` with per-field errors. |
+| **Request** | `POST /reservations`, JSON body `{"companion_id": int, "customer_id": int, "start_at": ISO-8601 datetime, "end_at": ISO-8601 datetime, "activity": "DINNER" \| "EVENT" \| "WALK" \| "OTHER"}` |
+| **Validate** | `ReservationCreateSerializer` (`src/reservations/serializers.py`): all fields required; companion exists and `is_active`; customer (user) exists; `activity` is one of the allowed values; `start_at < end_at`; `start_at` in the future; a companion cannot book themselves. Failure → `400` with per-field errors. |
 | **Persist** | `Reservation` row in SQLite (`src/db.sqlite3`) with status `DRAFT`, times stored in UTC. The DB also enforces `start_at < end_at` via a check constraint. |
 | **Return ID** | `201 Created`, body `{"id": "<uuid>", "status": "DRAFT"}` |
 | **Automated check** | `pytest` → `src/reservations/tests/test_cp1_create_reservation.py` (happy path verifies the row exists in the DB; negative cases for every validation rule) |

@@ -4,7 +4,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from reservations.models import Reservation, ReservationStatus
+from reservations.models import Activity, Reservation, ReservationStatus
 
 URL = "/reservations"
 
@@ -20,6 +20,7 @@ def test_create_reservation_persists_and_returns_id(api_client, valid_payload, c
     stored = Reservation.objects.get(id=reservation_id)
     assert stored.companion == companion
     assert stored.customer == customer
+    assert stored.activity == Activity.DINNER
     assert stored.status == ReservationStatus.DRAFT
 
 
@@ -78,7 +79,19 @@ def test_rejects_companion_booking_themselves(api_client, valid_payload, compani
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("missing", ["companion_id", "customer_id", "start_at", "end_at"])
+def test_rejects_unknown_activity(api_client, valid_payload):
+    valid_payload["activity"] = "KARAOKE"
+
+    response = api_client.post(URL, valid_payload, format="json")
+
+    assert response.status_code == 400
+    assert "activity" in response.data
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "missing", ["companion_id", "customer_id", "start_at", "end_at", "activity"]
+)
 def test_rejects_missing_field(api_client, valid_payload, missing):
     del valid_payload[missing]
 

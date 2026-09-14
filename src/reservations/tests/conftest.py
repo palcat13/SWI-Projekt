@@ -32,4 +32,5 @@ def valid_payload(companion, customer):
         "customer_id": customer.pk,
         "start_at": start.isoformat(),
         "end_at": (start + timedelta(hours=2)).isoformat(),
+        "activity": "DINNER",
     }

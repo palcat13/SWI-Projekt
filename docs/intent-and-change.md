@@ -4,15 +4,18 @@
 Booking a companion for a time-boxed social activity (non-sexual companionship).
 
 ## Purpose
-TODO — 2–3 sentences: who the system serves and why.
+The system lets customers book a companion for a time-boxed social activity such as a dinner, a wedding or a cultural event. Companions keep control over their time by approving each booking. The system prevents double-booking of a companion.
 
 ## Users / Stakeholders
-TODO — 1–3 roles.
+- **Customer** — creates and cancels reservations.
+- **Companion** — approves or cancels reservations of their own time.
+- **Administrator** — manages companion profiles.
 
 ## Core concepts
 - **Reservation** — a request to spend a specific time slot (`start_at`–`end_at`) with one companion; it has an identity (UUID), a state and an owner (customer).
 - **Resource (Companion)** — a person offering their time; has their own user account (so they can approve reservations) and can be active or inactive.
 - **User (Customer)** — a registered user who creates reservations.
+- **Activity** — type of occasion the reservation is for (dinner, event, walk, other).
 
 ## Core operations
 - Create reservation
@@ -21,7 +24,7 @@ TODO — 1–3 roles.
 - Check availability
 
 ## Persistent state
-**Reservation:** `id` (UUID), `companion` (FK → Companion), `customer` (FK → User), `start_at`, `end_at` (timezone-aware, stored in UTC), `status` (`DRAFT` / `PENDING_APPROVAL` / `CONFIRMED` / `CANCELLED`), `created_at`, `updated_at`.
+**Reservation:** `id` (UUID), `companion` (FK → Companion), `customer` (FK → User), `start_at`, `end_at` (timezone-aware, stored in UTC), `activity` (`DINNER` / `EVENT` / `WALK` / `OTHER`), `status` (`DRAFT` / `PENDING_APPROVAL` / `CONFIRMED` / `CANCELLED`), `created_at`, `updated_at`.
 
 **Companion (Resource):** `id`, `user` (1:1 → User), `display_name`, `bio`, `is_active`, `created_at`.
 
@@ -48,13 +51,15 @@ A reservation can move to CONFIRMED only after the booked companion explicitly a
 **Notification Service** — notifies the companion that a new reservation is waiting for approval, and notifies the customer when a reservation is confirmed or cancelled. The reservation system calls it; a failure or timeout of the notification must not roll back the change of the reservation's state. Not implemented in CP1; will be accessed through an interface so it can be stubbed.
 
 ## Assumption
-TODO
+Companions respond to a pending reservation within 24 hours.
 
 ## Unknown
-TODO
+What should happen to a `PENDING_APPROVAL` reservation when the companion never responds — should it expire automatically, and after how long?
 
 # Selected future pressure
 
-Category: TODO (Q / C / R / L)
-Concrete pressure: TODO
-Why it is relevant to our reservation system: TODO
+Category: C (Changeability)
+
+Concrete pressure: Pending reservations that the companion does not approve within 24 h must expire automatically (new state `EXPIRED`).
+
+Why it is relevant to our reservation system: The approval step is the core of our domain. A new state affects the state machine, the availability check and the notifications.
