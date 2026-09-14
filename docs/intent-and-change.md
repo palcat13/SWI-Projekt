@@ -12,10 +12,10 @@ The system lets customers book a companion for a time-boxed social activity such
 - **Administrator** — manages companion profiles.
 
 ## Core concepts
-- **Reservation** — booking of one companion by one customer for a time slot; has a state.
-- **Resource (Companion)** — a person offering companionship who can be booked.
-- **User (Customer)** — a registered person who creates reservations.
-- **Activity** — type of occasion (dinner, event, walk).
+- **Reservation** — a request to spend a specific time slot (`start_at`–`end_at`) with one companion; it has an identity (UUID), a state and an owner (customer).
+- **Resource (Companion)** — a person offering their time; has their own user account (so they can approve reservations) and can be active or inactive.
+- **User (Customer)** — a registered user who creates reservations.
+- **Activity** — type of occasion the reservation is for (dinner, event, walk, other).
 
 ## Core operations
 - Create reservation
@@ -24,8 +24,13 @@ The system lets customers book a companion for a time-boxed social activity such
 - Check availability
 
 ## Persistent state
-- **Reservation:** id, companion_id, customer_id, start_time, end_time, activity, state, created_at, updated_at
-- **Companion:** id, display_name, active
+**Reservation:** `id` (UUID), `companion` (FK → Companion), `customer` (FK → User), `start_at`, `end_at` (timezone-aware, stored in UTC), `activity` (`DINNER` / `EVENT` / `WALK` / `OTHER`), `status` (`DRAFT` / `PENDING_APPROVAL` / `CONFIRMED` / `CANCELLED`), `created_at`, `updated_at`.
+
+**Companion (Resource):** `id`, `user` (1:1 → User), `display_name`, `bio`, `is_active`, `created_at`.
+
+**User:** Django `auth.User` (username, e-mail, password hash, …).
+
+Storage: SQLite through the Django ORM + migrations (see `docs/architecture-and-decisions.md`, D3).
 
 ## State-changing operation
 Reservation states: `DRAFT`, `PENDING_APPROVAL`, `CONFIRMED`, `CANCELLED`.
@@ -43,7 +48,7 @@ Confirmed reservations for the same resource must not overlap.
 A reservation can move to CONFIRMED only after the booked companion explicitly approves it. Neither the customer nor the system can confirm a reservation on the companion's behalf.
 
 ## External / system boundary
-**Notification Service** — notifies the companion when a reservation is waiting for approval, and the customer when it is confirmed or cancelled.
+**Notification Service** — notifies the companion that a new reservation is waiting for approval, and notifies the customer when a reservation is confirmed or cancelled. The reservation system calls it; a failure or timeout of the notification must not roll back the change of the reservation's state. Not implemented in CP1; will be accessed through an interface so it can be stubbed.
 
 ## Assumption
 Companions respond to a pending reservation within 24 hours.
