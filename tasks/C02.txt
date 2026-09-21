@@ -1,0 +1,380 @@
+SWI · Cvičení C02
+Úplná specifikace základního chování → aplikace vytvořená s pomocí AI → změna
+
+Práce v C02 · dokončit před C03 · průběžný vstup do CP1
+Co je cílem
+
+V C01 jste určili, jaký rezervační systém stavíte. V C02 musíte přesně popsat a odsouhlasit celé jeho minimální chování: vytvoření rezervace, zjištění dostupnosti, potvrzení rezervace a její zrušení.
+
+Výsledkem nemá být „dokument s požadavky“. Výsledkem má být specifikace, které tým rozumí a za kterou dokáže převzít odpovědnost, plus jednoduchá spustitelná aplikace vytvořená s pomocí AI, jejíž chování této specifikaci odpovídá.
+
+V C03 vezmete právě tuto aplikaci a budete řešit její architekturu. Proto v C02 neoptimalizujte strukturu kódu dopředu.
+Co si máte odnést: AI může navrhnout požadavky, diagramy, testy i kód. Vy musíte být schopni u každého přijatého požadavku vysvětlit co přesně znamená, proč je potřeba, kdy platí, co by ukázalo jeho porušení a jak poznáme, že jej systém splňuje.
+Vztah k CP1: C02 vytváří především část Požadavky + evidence. C03 přidá architekturu a upraví běžící základ do obhajitelného walking skeletonu. Stav pro CP1 se zmrazí po C03 a kontroluje během C04. C02 tedy není samostatný projekt vedle CP1 — je jeho součást.
+
+C02 předpokládá dokončený C01. Project Frame, zvolenou doménu rezervačního systému, repozitář, C01 spike ani definici walking skeletonu znovu nevytvářejte.
+A. Baseline v0.1 — specifikujte celý minimální systém
+1. Čtyři základní operace
+
+Zpracujte všechny následující operace. Názvy můžete přizpůsobit své doméně, jejich význam ale musí zůstat jednoznačný:
+
+    Create Reservation — vytvoření návrhu nebo žádosti o rezervaci.
+    Check Availability — zjištění, zda je Resource v požadovaném intervalu dostupný.
+    Confirm Reservation — okamžik, kdy systém rezervaci přijme jako platnou alokaci Resource.
+    Cancel Reservation — zrušení existující rezervace podle přijatých pravidel.
+
+Pozor na význam: „Create“ automaticky neznamená, že Resource už je skutečně rezervován. „Cancel“ automaticky neznamená fyzické smazání dat. Operace `Approve` zatím není součástí základního modelu — objeví se až po změně, pokud nový proces skutečně vyžaduje schvalování.
+2. Pro každou operaci vytvořte úplnou část specifikace
+
+Každou ze čtyř operací popište stejnou strukturou. Následující šablona říká, co má být u operace promyšleno; neznamená to, že máte zbytečně opakovat stejné pravidlo ve více částech.
+
+## OP-xx — Název operace
+
+Cíl / hodnota pro uživatele:
+Spouštěcí událost:
+Pozorovatelný požadavek / požadavky:
+Předpoklady:
+Stav po úspěšném provedení:
+Změna stavu:
+Odkaz na doménová pravidla / invarianty:
+
+Hlavní úspěšný scénář:
+1.
+2.
+3.
+...
+
+Alternativní / chybové výsledky:
+...
+
+Příklady ověření:
+...
+
+Zdůvodnění / zdroj:
+Předpoklad / neznámá / TBD:
+  jen pokud je něco skutečně nerozhodnuté
+
+Společná pravidla neopakujte v každé operaci. Definujte je jednou v části Doménová pravidla a z jednotlivých operací na ně odkazujte.
+3. Kontrola přijetí každého požadavku
+
+Každý požadavek, který tým přijme jako součást baseline, musí projít touto kontrolou. Otázky nemusíte mechanicky opisovat pod každý požadavek; musí ale být zřejmé, že jste je při revizi skutečně řešili.
+Otázka	Co kontrolujete
+Význam	Jsou důležité pojmy, podmínky a hranice jednoznačné?
+Potřeba / zdůvodnění	Proč požadavek existuje? Je skutečně potřebný?
+Pozorovatelný výsledek	Popisuje požadované chování systému, nebo potichu předepisuje způsob implementace?
+Proveditelnost	Lze jej splnit společně s ostatními požadavky?
+Ověřitelnost	Jaký konkrétní výsledek by ukázal splnění nebo porušení?
+Stav / čas	Záleží jeho význam na stavu, pořadí, čase nebo hranici intervalu?
+Souběh	Může paralelní provádění změnit business výsledek?
+Konzistence	Souhlasí s ostatními požadavky, scénáři, pravidly a diagramy?
+Nejistota	Pokud něco nevíte, je to explicitní TBD / předpoklad místo vymyšlené přesnosti?
+Přijatý požadavek znamená, že tým umí tyto otázky zodpovědět a výsledek obhájit. Formálně hezká věta sama o sobě nestačí.
+4. Podrobný referenční příklad — Create Reservation
+
+Příklad odpovídá běžnému systému s exkluzivním Resource. Vlastní doménu přizpůsobte, ale zachovejte stejnou úroveň přesnosti.
+
+Ukázka specifikace je záměrně anglicky.
+
+## OP-01 — Create Reservation
+
+Goal / user value:
+User creates a reservation request that can later be confirmed.
+
+Trigger:
+Authorized User requests a Reservation for Resource R and interval I.
+
+Observable requirement:
+REQ-01:
+The system shall create a DRAFT Reservation for an existing Resource
+when the requested interval is valid.
+
+Preconditions:
+- User is authorized to create Reservations.
+- Resource exists.
+- start < end.
+
+Success postcondition:
+- one new Reservation exists;
+- Reservation.state = DRAFT;
+- no Resource allocation is committed yet.
+
+State change:
+[none] → DRAFT
+
+Referenced rules:
+BR-01 Interval semantics.
+
+Main success scenario:
+1. User submits Resource and interval.
+2. System validates authorization, Resource and interval.
+3. System creates Reservation in DRAFT.
+4. System returns the Reservation identifier and current state.
+
+Alternative / failure outcomes:
+- unauthorized User → reject; no Reservation created;
+- unknown Resource → reject; no Reservation created;
+- invalid interval → reject; no Reservation created.
+
+Verification examples:
+valid Resource + [10:00,11:00) → one DRAFT created
+start == end → rejected
+unknown Resource → rejected
+
+Rationale:
+Creation records user intent without committing Resource allocation.
+
+Důležitý význam: v tomto příkladu se při Create nekontroluje kolize rezervací, protože stav DRAFT ještě Resource nealokuje. Tým může zvolit jinou politiku, ale musí ji explicitně popsat a používat konzistentně. AI toto rozhodnutí nesmí udělat potichu za vás.
+5. Podrobný referenční příklad — Check Availability
+
+Ukázka specifikace je záměrně anglicky.
+
+## OP-02 — Check Availability
+
+Goal / user value:
+User can determine whether an exclusive Resource is currently
+available for a requested interval.
+
+Observable requirement:
+REQ-02:
+For a valid interval, the system shall report a Resource as unavailable
+if the interval overlaps any CONFIRMED Reservation of that Resource;
+otherwise it shall report it as available.
+
+Preconditions:
+- Resource exists.
+- requested interval is valid.
+
+Success postcondition:
+- availability result is returned;
+- no Reservation state is changed.
+
+Referenced rules:
+BR-01 Interval semantics.
+BR-02 Exclusive Resource invariant.
+
+Verification examples:
+Existing CONFIRMED: [10:00,11:00)
+
+query [09:00,10:00) → AVAILABLE
+query [10:30,11:30) → UNAVAILABLE
+query [11:00,12:00) → AVAILABLE
+
+Accepted semantics:
+Intervals are half-open: [start,end).
+
+Tady musí být jasné co znamená překryv a které stavy Resource skutečně blokují. Jinak může mít požadavek, diagram, implementace a test každý jiný význam.
+6. Podrobný referenční příklad — Confirm Reservation
+
+Ukázka specifikace je záměrně anglicky.
+
+## OP-03 — Confirm Reservation
+
+Goal / user value:
+A valid DRAFT Reservation becomes the accepted allocation of Resource.
+
+Trigger:
+Authorized User requests confirmation of Reservation X.
+
+Observable requirements:
+REQ-03:
+The system shall confirm a DRAFT Reservation only when its Resource
+is active and its interval does not conflict with an existing
+CONFIRMED Reservation of the same exclusive Resource.
+
+REQ-04:
+For concurrent confirmation attempts that conflict under BR-02,
+at most one Reservation shall reach CONFIRMED.
+
+Preconditions:
+- Reservation exists.
+- Reservation.state = DRAFT.
+
+Success postcondition:
+- Reservation.state = CONFIRMED;
+- the Reservation blocks its Resource for its interval;
+- BR-02 remains true.
+
+Failure outcomes:
+- inactive Resource → reject; Reservation remains DRAFT;
+- overlap exists → reject; Reservation remains DRAFT;
+- invalid source state → reject; state unchanged.
+
+Verification examples:
+DRAFT + active Resource + no overlap → CONFIRMED
+DRAFT + overlap → rejected, remains DRAFT
+two concurrent conflicting confirmations → at most one CONFIRMED
+
+Tady už souběh není jen implementační detail. Pokud může rozhodnout, zda vznikne dvojí rezervace stejného Resource, patří jeho pozorovatelný výsledek do specifikace. Jak jej zajistí architektura, bude téma C03.
+7. Podrobný referenční příklad — Cancel Reservation
+
+Ukázka specifikace je záměrně anglicky.
+
+## OP-04 — Cancel Reservation
+
+Goal / user value:
+An eligible Reservation can be withdrawn and stops blocking Resource.
+
+Observable requirement — EXAMPLE POLICY:
+REQ-05:
+The system shall allow a DRAFT or CONFIRMED Reservation to be
+cancelled before its start time.
+
+Preconditions:
+- Reservation exists.
+- Reservation.state ∈ {DRAFT, CONFIRMED}.
+- currentTime < Reservation.start.
+
+Success postcondition:
+- Reservation.state = CANCELLED;
+- Reservation no longer blocks Resource availability.
+
+Failure outcomes:
+- already CANCELLED → [team decides: idempotent success OR explicit rejection];
+- start time reached/passed → reject;
+- Cancel races with Confirm → team defines accepted observable outcome.
+
+Verification examples:
+DRAFT before start → CANCELLED
+CONFIRMED before start → CANCELLED and Resource becomes available
+CONFIRMED at/after start → rejected according to accepted policy
+
+Toto je referenční pravidlo, ne povinné business pravidlo. Tým musí zvolit logickou politiku rušení pro svou doménu a potom ji používat ve všech pohledech a testech. Pokud pracujete s formulací „před začátkem“, určete dostatečně přesně časovou hranici a zdroj času, aby šla podmínka ověřit.
+8. Definujte společná doménová pravidla a invarianty pouze jednou
+
+Minimálně zachyťte pravidla, která platí napříč více operacemi.
+
+BR-01 — Interval semantics
+Reservation intervals use [start,end) semantics.
+
+BR-02 — Exclusive Resource invariant
+At no committed system state may two CONFIRMED Reservations overlap
+for the same exclusive Resource.
+
+BR-03 — Cancellation policy
+[team-defined, domain-specific accepted policy]
+
+BR-04 — Domain-specific rule from C01
+[team-defined]
+
+Pokud vaše doména používá kapacitní Resource místo exkluzivního, nahraďte BR-02 odpovídajícím pravidlem o kapacitě a zdůvodněte to.
+9. Zpracujte chování celého systému také vizuálně
+9a. Diagram případů užití — aktéři a cíle
+
+Vytvořte jeden jednoduchý pohled na celý minimální systém, který ukáže:
+
+    hranici systému;
+    relevantní aktéry;
+    všechny čtyři základní cíle / operace;
+    podpůrného externího aktéra pouze tehdy, pokud skutečně existuje.
+
+Neplňte diagram databázemi, třídami ani interními komponentami. Nepoužívejte include/extend jen proto, že je UML umožňuje.
+9b. Stavový diagram životního cyklu Reservation
+
+Vytvořte stavový diagram pokrývající celý životní cyklus Reservation. Baseline v0.1 typicky potřebuje alespoň:
+
+[initial] --create--> DRAFT
+DRAFT --confirm [conditions satisfied]--> CONFIRMED
+DRAFT --cancel [policy allows]--> CANCELLED
+CONFIRMED --cancel [policy allows]--> CANCELLED
+
+Podmínky přechodů a povolené přechody musí odpovídat textové specifikaci. Pokud text operaci připouští a diagram ji zakazuje — nebo naopak — jde o rozpor, který musíte vyřešit.
+9c. Diagram aktivit
+
+Přidejte diagram aktivit pro jednotlivá chování/funkcnosti syst0mu
+10. Kontrola konzistence mezi operacemi a pohledy
+
+Teď kontrolujte specifikaci jako jeden systém vzájemně souvisejících tvrzení, ne jako čtyři izolované texty.
+Kontrola	Typický problém
+Create vs. Confirm	Create už alokuje Resource, ale Confirm předpokládá, že alokace vzniká až při potvrzení.
+Availability vs. Confirm	Každá operace považuje za blokující jiné stavy.
+Cancel vs. stavový diagram	Text dovoluje zrušit CONFIRMED, diagram ne.
+Význam intervalů	Požadavek používá [start,end), ale ověření nebo test uzavřený interval.
+Diagram případů užití vs. text	Aktér má cíl, pro který neexistuje specifikované chování — nebo naopak.
+Požadavek vs. návrhové rozhodnutí	„Use PostgreSQL“ se objeví jako požadavek bez externího omezení.
+Nejistota vs. vymyšlená přesnost	AI doplnila timeout, počet retry nebo jinou hodnotu bez zdroje a zdůvodnění.
+
+Opravte nalezené rozpory a označte stav jako Specification Baseline v0.1 — schválená týmem.
+11. Vytvořte / přegenerujte aplikaci podle baseline v0.1
+
+Použijte AI libovolně. Vytvořte jednoduchou spustitelnou aplikaci, ve které lze demonstrovat všechny čtyři základní operace. Uživatelské rozhraní není povinné — API, příkazová řádka nebo jiný reprodukovatelný interface stačí.
+
+Architektura může být v této fázi jednoduchá nebo špatná. Cílem je funkční výchozí stav, ne architektonická dokonalost.
+
+Pro každou operaci skutečně spusťte alespoň:
+
+    jeden úspěšný příklad;
+    jeden relevantní negativní nebo hraniční příklad.
+
+Pokud aplikace neodpovídá specifikaci, nerozhodujte automaticky, že „kód je špatně“. Určete, zda je problém ve specifikaci, příkladu ověření nebo implementaci, a opravte správný zdroj.
+B. Změna — schvalovací proces
+12. Změnová karta
+Změna C02:
+Některé Resources vyžadují schválení oprávněnou osobou dříve, než se Reservation může stát CONFIRMED. Schválení může být opožděno, zamítnuto nebo může vypršet.
+
+Nejdřív proveďte analýzu dopadu. Ještě nic nepřepisujte.
+Oblast	Otázka
+Create	Mění se Create, nebo stále jen vytváří DRAFT?
+Availability	Blokuje PENDING_APPROVAL Resource? Proč?
+Confirm	Je Confirm stále okamžitá operace, nebo se rozdělí na žádost a následné schválení?
+Approve	Vzniká nový cíl aktéra / nová operace? Kdo ji smí provést?
+Cancel	Lze zrušit PENDING_APPROVAL?
+Stavový diagram	Potřebujete PENDING_APPROVAL, REJECTED, EXPIRED nebo jinou reprezentaci?
+Diagram případů užití	Přibyl nový aktér schvalovatele nebo nový cíl?
+Ověření	Jak ověříte zpoždění, zamítnutí, vypršení a jejich vliv na dostupnost?
+Architektura	Vzniká nový architektonický driver pro perzistentní/asynchronní proces, časovač nebo externí notifikaci?
+13. Aktualizujte specifikaci na baseline v0.2
+
+Upravte pouze skutečně zasažené požadavky, části specifikace, pravidla a diagramy. Explicitně uveďte i to, co se nezměnilo.
+
+## Dopad změny C02
+
+Změněná podmínka:
+Dotčené požadavky / části specifikace:
+Nedotčené požadavky / části + proč:
+Nový aktér / operace, pokud vznikne:
+Změněná pravidla / význam stavů:
+Změna diagramu případů užití:
+Změna stavového diagramu:
+Nové příklady ověření:
+Architektonické drivery pro C03:
+
+Pokud změna vytvořila novou operaci Approve Reservation, zpracujte ji stejnou strukturou jako ostatní operace. Teprve teď má `Approve` samostatný engineering význam.
+14. Aktualizujte běžící aplikaci
+
+Podle schválené baseline v0.2 aplikaci upravte nebo přegenerujte. Znovu ověřte změněné příklady chování. Neřešte ještě ideální architekturu — pouze zachyťte architektonické drivery, které změna odkryla.
+15. Minimální evidence pro C03 a CP1
+
+Do docs/evidence-and-evolution.md stručně zapište:
+
+## Evidence C02: specifikace → běžící aplikace
+
+Přijatá baseline:
+Předvedené základní operace:
+Skutečně provedené příklady ověření:
+Nalezený nesoulad a způsob vyřešení:
+Shrnutí dopadu změny:
+Zbývající předpoklad / neznámá:
+Architektonické drivery přenesené do C03:
+Commit / tag aplikace:
+
+Historie promptů ani log používání AI se neodevzdává.
+Definice hotového — před C03
+
+    ☐ všechny čtyři základní operace mají úplnou textovou část specifikace;
+    ☐ každý přijatý požadavek prošel kontrolou přijetí požadavku;
+    ☐ společná doménová pravidla a invarianty jsou definovány pouze jednou;
+    ☐ existuje diagram případů užití / pohled na aktéry a cíle celého minimálního systému;
+    ☐ existuje stavový diagram celého životního cyklu Reservation;
+    ☐ textová specifikace, požadavky, diagram případů užití a stavový diagram jsou vzájemně konzistentní;
+    ☐ baseline v0.1 byla týmem explicitně schválena;
+    ☐ aplikace vytvořená s pomocí AI demonstruje všechny čtyři základní operace;
+    ☐ pro každou operaci byl skutečně spuštěn jeden úspěšný a jeden relevantní negativní / hraniční příklad;
+    ☐ dopad změny byl analyzován před úpravou specifikace;
+    ☐ dotčené i nedotčené části jsou explicitně identifikovány;
+    ☐ případná nová operace Approve je úplně specifikována;
+    ☐ diagram případů užití a stavový diagram jsou aktualizovány na v0.2;
+    ☐ běžící aplikace odpovídá schválené baseline v0.2;
+    ☐ evidence propojuje specifikaci s běžícím chováním;
+    ☐ alespoň jeden konkrétní architektonický driver je připraven pro C03.
+
+Výsledek C02: máte úplně specifikované minimální chování svého reservation-type systému, dva vzájemně konzistentní systémové pohledy, běžící aplikaci vytvořenou s pomocí AI a evidence, že její chování odpovídá přijaté specifikaci. V C03 už nebudete řešit „co má systém dělat“, ale jak má být strukturován, aby to dělal správně, udržitelně a i po změnách. 

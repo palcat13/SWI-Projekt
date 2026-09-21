@@ -43,3 +43,83 @@ Does a `Reservation` survive a round trip through a real database (SQLite) via t
 - **The `start_at < end_at` invariant is enforced twice:** in the serializer (a friendly `400`) and as a DB constraint (a safety net against bypassing the API).
 - **Open (for the future pressure):** SQLite does not support row locking (`select_for_update`). The rule "confirmed reservations must not overlap" under concurrent confirmations is not verified yet. This is a candidate for the Q pressure and for moving to PostgreSQL (see D3).
 - **Still to do for the C01 DoD:** a second team member reviews this change and re-runs `pytest` + the manual check from the README on a clean checkout.
+
+---
+
+# Evidence C02: specification → running application
+
+## Accepted baseline
+- **v0.1** — approved by the team on 2026-09-21: OP-01 Create, OP-02 Check Availability, OP-03 Confirm (direct `DRAFT → CONFIRMED`), OP-04 Cancel, rules BR-01 … BR-06. See [specification.md](specification.md).
+- **v0.2** — after change C02 (approval process): OP-05 Approve, OP-06 Reject, states `PENDING_APPROVAL`, `REJECTED`, `EXPIRED`, amended BR-02 (a live pending request blocks) and BR-04 (the C01 rule back in force for companions with `requires_approval`).
+
+## Demonstrated core operations
+A Django + DRF application (`src/`), a REST interface without a UI. All operations of baseline v0.2 are runnable: `POST /reservations`, `GET /companions/{id}/availability`, and `POST /reservations/{uuid}/confirm|cancel|approve|reject`, plus the `expire_pending_approvals` command.
+
+## Verification examples actually run
+**Automated:** `pytest` (2026-09-21, Python 3.12.3, Django 5.2.17, DRF 3.18.1) → **50 passed**. Per operation: `test_availability.py` (9), `test_confirm.py` (10), `test_cancel.py` (10), `test_approve.py` (7), plus the CP1 create tests and the C01 persistence spike. Boundaries covered: touching intervals `[10,11)` / `[11,12)`, cancellation 23 h 59 min vs. 24 h 01 min before the start, approval 1 s after the deadline, a pending request before and after its deadline, two conflicting confirmations in sequence.
+
+**Manual through a running server** — `scripts/demo_c02.sh` (reproducible, migrates + seeds + starts the server on port 8765). Actual output:
+
+```
+===== OP-01 Create Reservation =====
+--- success: new DRAFT
+{"id":"eacee63e-dd0e-4189-9833-77aea28da028","status":"DRAFT"}                         HTTP 201
+--- negative: end_at before start_at
+{"end_at":["end_at must be after start_at."]}                                          HTTP 400
+
+===== OP-02 Check Availability =====
+--- success: free slot (only DRAFTs so far)
+{"companion_id":4,"available":true,"companion_active":true,"blocking_reservations":[]}  HTTP 200
+--- negative: invalid interval
+{"end_at":["end_at must be after start_at."]}                                          HTTP 400
+
+===== OP-03 Confirm Reservation =====
+--- success: DRAFT -> CONFIRMED
+{"id":"582422f4-5628-42ba-8b72-979647af7831","status":"CONFIRMED","approval_deadline":null}  HTTP 200
+--- boundary: the slot is now unavailable
+{"available":false,"blocking_reservations":["582422f4-5628-42ba-8b72-979647af7831"]}    HTTP 200
+--- negative: overlapping confirmation
+{"error":"OVERLAP","detail":"The companion is not available for this interval."}        HTTP 409
+
+===== OP-04 Cancel Reservation =====
+--- success: CONFIRMED cancelled 7 days ahead
+{"id":"582422f4-5628-42ba-8b72-979647af7831","status":"CANCELLED"}                      HTTP 200
+--- negative: CONFIRMED within the 24 h notice (starts in 12 h)
+{"error":"TOO_LATE","detail":"A confirmed reservation can only be cancelled 24 h before its start."}  HTTP 409
+
+===== OP-05 / OP-06 Approve and Reject (v0.2) =====
+--- success: confirmation of an approval-requiring companion -> PENDING_APPROVAL
+{"id":"760d416f-2821-4f20-a87f-64fe5ac12f3e","status":"PENDING_APPROVAL","approval_deadline":"2026-09-22T16:02:18.690014Z"}  HTTP 200
+--- negative: the customer cannot approve their own request
+{"error":"FORBIDDEN_ACTOR","detail":"Only the booked companion can decide about this request."}  HTTP 403
+--- success: the booked companion approves
+{"id":"760d416f-2821-4f20-a87f-64fe5ac12f3e","status":"CONFIRMED"}                      HTTP 200
+
+===== expiry of the approval window =====
+--- expire_pending_approvals (one request past its deadline)
+expired=1
+```
+
+## Found inconsistencies and how they were resolved
+1. **C01 domain rule vs. the C02 baseline.** The C01 Project Frame required approval of *every* reservation, but C02 forbids `Approve` in baseline v0.1. **Resolution:** the source at fault was the scope of the rule, not the code. BR-04 is deliberately relaxed in v0.1 (direct confirmation) and change C02 brings it back for companions with `requires_approval = true`. Both documents now say so explicitly, and the C01 state table was rewritten into the v0.2 transitions.
+2. **The verification example was wrong, not the implementation.** The first demo run returned `400 "Datetime has wrong format"` for availability. The cause was the example: the `+02:00` offset in the URL query decodes as a space. The API was right; we fixed the script (`curl --data-urlencode`) and the README now says the query must be URL-encoded.
+3. **Two sources of truth about expiry.** Marking `EXPIRED` by a command alone would mean that availability lies until somebody runs it. **Resolution:** the deadline is data and every availability/overlap query respects it (D9); the command only materialises the state. The residual duality is recorded as a driver for C03.
+
+## Change impact summary
+Create (REQ-01), the cancellation boundary (REQ-05), idempotency (REQ-06), BR-01 and BR-05 are **unchanged**. What changed: BR-02 (the set of blocking states), BR-04 (back in force), OP-03 (splits into a request and a decision), the result of OP-02 (a consequence of BR-02), BR-03 (extended by `PENDING_APPROVAL`), plus three new states and two new operations for an actor that already existed (the Companion). Details in *C02 change impact* in [specification.md](specification.md).
+
+## Remaining assumptions / unknowns
+- The **24 h** approval window and the **24 h** cancellation notice are team-chosen values derived from the C01 assumption; they have no external source.
+- **REQ-04 / REQ-09 under real parallelism** are verified only sequentially — SQLite cannot lock rows (D3).
+- **Actor identity** (`actor_user_id` in the body, D7) is a stand-in for authentication.
+- The **Notification Service** is still only a boundary in the specification; nothing calls it yet.
+
+## Architectural drivers carried into C03
+1. Concurrency around BR-02 → PostgreSQL with `select_for_update` or a DB exclusion constraint.
+2. A time-driven process for expiry (a scheduler vs. read-time evaluation, D9).
+3. The notification boundary — an interface, a stub, and a failure policy that does not roll back the state.
+4. The domain rules living in `views.py` and the actor rules repeated in four views → extract a domain layer (one transition = one function).
+5. Real authentication instead of `actor_user_id` (D7).
+
+## Commit / tag
+Branch `c02-baseline`, tag `v0.2` to be created on merge to `main`.

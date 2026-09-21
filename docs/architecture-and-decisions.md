@@ -22,19 +22,21 @@
 
 ```
 HTTP client
-   │  POST /reservations (JSON)
+   │  POST /reservations · GET /companions/{id}/availability
+   │  POST /reservations/{id}/confirm | cancel | approve | reject
    ▼
 config/urls.py ──► reservations/urls.py
    ▼
-ReservationCreateView (reservations/views.py)        ← API layer
+views.py           ← API layer + the BR-02/BR-03/BR-04 checks (C03 refactoring target)
    ▼
-ReservationCreateSerializer (reservations/serializers.py)  ← validation + business rules
+serializers.py     ← input validation
    ▼
-Companion, Reservation models (reservations/models.py)     ← domain + persistence (Django ORM)
+models.py          ← domain + persistence, blocking_reservations() = the single definition of BR-02
    ▼
 SQLite (src/db.sqlite3)
 
-Notification Service  ← external boundary, NOT implemented yet (planned after CP1)
+manage.py expire_pending_approvals   ← materialises EXPIRED past the deadline
+Notification Service                 ← external boundary, NOT implemented yet
 ```
 
 - **config** — Django project: settings, root URLs, WSGI/ASGI.
@@ -73,3 +75,25 @@ Notification Service  ← external boundary, NOT implemented yet (planned after 
 - **Context:** CP1 is about the end-to-end path, not about identity.
 - **Decision:** DRF authentication disabled (`AllowAny`); the client sends `customer_id` in the request body.
 - **Consequences:** Anyone can create a reservation on behalf of any user. This is acceptable only for the walking skeleton. The rule "only the booked companion can confirm" (step after CP1) needs authentication, so authentication must be added before the confirm operation is implemented. `customer_id` will then come from the logged-in user.
+
+### D7 — The actor is passed in the request body
+- **Context:** Confirm, Cancel, Approve and Reject need to know who is acting (BR-06, spec REQ-03/05/09). There is no authentication (D6).
+- **Decision:** Every state-changing operation takes `actor_user_id` in the JSON body; the system compares it against the reservation's customer or the booked companion's user.
+- **Consequences:** The actor rules are verifiable by tests and by curl without a login, so baseline v0.2 can be demonstrated. Anyone can claim any identity, so this must not reach production. Real authentication changes all four operations — a driver for C03.
+
+### D8 — A pending approval blocks availability
+- **Context:** Change C02 introduced `PENDING_APPROVAL`. It had to be decided whether such a reservation blocks the companion (spec REQ-08).
+- **Decision:** It blocks while `approval_deadline` has not passed. So the set of blocking states in BR-02 is {`CONFIRMED`, live `PENDING_APPROVAL`}.
+- **Consequences:** The system never promises one slot to two customers, at the cost of a slot being held by an undecided request until the deadline. The overlap check therefore also applies at the confirmation request, not only at approval.
+
+### D9 — The deadline is data; expiry only materialises the state
+- **Context:** `EXPIRED` is a state change with no user behind it. A background process may not have run.
+- **Decision:** `approval_deadline` is stored on the reservation and every availability and overlap query counts a pending reservation as blocking only while the deadline is live. The `expire_pending_approvals` command writes the `EXPIRED` state afterwards.
+- **Consequences:** Availability is correct even without a scheduler; the state in the DB may lag behind the real meaning for a while (a stale `PENDING_APPROVAL` row). Two sources of truth about the same fact are a smell — C03 has to decide on a scheduler, a read-time evaluation, or both with a defined relationship.
+
+## Architectural drivers for C03
+1. **Concurrency around BR-02** — REQ-04 and REQ-09 are business requirements about parallelism; SQLite cannot lock rows (D3), so today it is verified only sequentially. A real guarantee needs PostgreSQL with `select_for_update` or a DB exclusion constraint.
+2. **A time-driven process** — expiry (D9) has no actor; it needs a scheduler or read-time evaluation with a clear relationship to the stored state.
+3. **The notification boundary** — four operations want to notify, and a notification failure must not roll back the state change. It needs an interface, a stub and a failure policy.
+4. **Rules inside views** — the checks for BR-02, BR-03 and BR-04 and the actor rules are repeated across four views in `views.py`. Extracting a domain layer where one state transition = one function is the main refactoring for C03.
+5. **The actor's identity** — `actor_user_id` (D7) is a stand-in for authentication and affects every state-changing operation.
