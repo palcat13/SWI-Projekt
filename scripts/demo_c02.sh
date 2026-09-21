@@ -40,6 +40,8 @@ r_late = make(alice, timezone.now() + timedelta(hours=12), status=ReservationSta
 r_approve = make(bea, week + timedelta(days=1))
 r_stale = make(bea, week + timedelta(days=2), status=ReservationStatus.PENDING_APPROVAL,
                approval_deadline=timezone.now() - timedelta(minutes=1))
+r_reject = make(bea, week + timedelta(days=3), status=ReservationStatus.PENDING_APPROVAL,
+                approval_deadline=timezone.now() + timedelta(hours=1))
 
 print(f'CUSTOMER={customer.pk}')
 print(f'ALICE={alice.pk}')
@@ -49,6 +51,7 @@ print(f'R_CONFIRM={r_confirm.id}')
 print(f'R_OVERLAP={r_overlap.id}')
 print(f'R_LATE={r_late.id}')
 print(f'R_APPROVE={r_approve.id}')
+print(f'R_REJECT={r_reject.id}')
 print(f'SLOT_START={week.isoformat()}')
 print(f'SLOT_END={(week + timedelta(hours=2)).isoformat()}')
 ")
@@ -91,6 +94,8 @@ echo "===== OP-05 / OP-06 Approve and Reject (v0.2) ====="
 show "success: confirmation of an approval-requiring companion -> PENDING_APPROVAL" post "$BASE/reservations/$R_APPROVE/confirm" "$(actor $CUSTOMER)"
 show "negative: the customer cannot approve their own request" post "$BASE/reservations/$R_APPROVE/approve" "$(actor $CUSTOMER)"
 show "success: the booked companion approves" post "$BASE/reservations/$R_APPROVE/approve" "$(actor $BEA_USER)"
+show "negative: the customer cannot reject the request" post "$BASE/reservations/$R_REJECT/reject" "$(actor $CUSTOMER)"
+show "success: the booked companion rejects another request" post "$BASE/reservations/$R_REJECT/reject" "$(actor $BEA_USER)"
 
 echo "===== expiry of the approval window ====="
 kill $SERVER 2>/dev/null || true

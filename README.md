@@ -17,7 +17,7 @@ Reservation system for booking a companion for social activities (non-sexual com
 
 ## Tech stack
 
-Python 3.12 · Django 5.2 LTS · Django REST Framework · SQLite · pytest + pytest-django.
+Python 3.10+ · Django 5.2 LTS · Django REST Framework · SQLite · pytest + pytest-django.
 Justification: [architecture-and-decisions.md](docs/architecture-and-decisions.md).
 
 ## Project layout
@@ -32,7 +32,7 @@ src/reservations/       domain app: models, serializer, API view, tests
 
 ## Build & run
 
-Requires Python 3.12 with `venv` (`sudo apt install python3-venv` on Ubuntu/Debian).
+Requires Python 3.10+ with `venv` (`sudo apt install python3-venv` on Ubuntu/Debian).
 
 ```bash
 python3 -m venv .venv

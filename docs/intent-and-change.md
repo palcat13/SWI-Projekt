@@ -50,7 +50,7 @@ The transitions below are the state diagram of baseline v0.2; the guards and the
 | `CONFIRMED → CANCELLED` | Customer or companion cancels | At least 24 h before the start |
 
 ## Common business rule
-Confirmed reservations for the same resource must not overlap.
+Reservations that block the same companion must not overlap. In baseline v0.1 only `CONFIRMED` blocks; baseline v0.2 adds `PENDING_APPROVAL` while its approval deadline is live (BR-02 in [specification.md](specification.md)).
 
 ## Domain-specific business rule
 A reservation can move to CONFIRMED only after the booked companion explicitly approves it. Neither the customer nor the system can confirm a reservation on the companion's behalf.

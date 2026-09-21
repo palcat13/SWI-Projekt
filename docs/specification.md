@@ -229,6 +229,8 @@ Every requirement went through the team review. Summary of the answers:
 | REQ-09 *(v0.2)* | "only the booked companion" = `Companion.user` | BR-04, the C01 domain rule | outcome: `CONFIRMED` / `REJECTED` / `403` | a decision by the wrong actor | re-checks BR-02 at the decision |
 | REQ-10 *(v0.2)* | "did not decide" = `approval_deadline <= now` | the C01 assumption: a response within 24 h | outcome: `EXPIRED`, the slot is free | approval after the deadline + the sweeper command | the boundary is the deadline itself |
 
+The table answers *meaning, need, observable result, verifiability* and *state / time / concurrency*. The remaining three questions of the acceptance check are answered elsewhere and are not repeated per requirement: **feasibility** — every requirement has a verification example that the running application actually passes (see `evidence-and-evolution.md`); **consistency** — the two *Consistency check* tables below; **uncertainty** — the paragraph that follows plus the explicit TBDs in OP-03 and BR-06.
+
 **Uncertainty:** the 24 h approval window and the 24 h cancellation notice are **team-chosen values** derived from the C01 assumption ("companions respond within 24 h"). They have no external source, they are declared as configurable constants, and they are the first thing to revisit when real data arrives.
 
 ## Diagrams — baseline v0.1
@@ -268,6 +270,42 @@ stateDiagram-v2
   DRAFT --> CANCELLED: cancel [before start, BR-03] (OP-04)
   CONFIRMED --> CANCELLED: cancel [at least 24 h before start, BR-03] (OP-04)
   CANCELLED --> [*]
+```
+
+### Activity — Create reservation (OP-01)
+
+```mermaid
+flowchart TD
+  start([create request]) --> fields{all fields present and well-formed?}
+  fields -- no --> f400[400 with per-field errors]
+  fields -- yes --> companion{companion exists and is active?}
+  companion -- no --> f400
+  companion -- yes --> interval{start_at < end_at? BR-01}
+  interval -- no --> f400
+  interval -- yes --> future{start_at in the future? BR-05}
+  future -- no --> f400
+  future -- yes --> self{customer = the booked companion?}
+  self -- yes --> f400
+  self -- no --> save[create the reservation in DRAFT, nothing allocated]
+  save --> done([201 with the identifier and the state])
+```
+
+### Activity — Check availability (OP-02)
+
+```mermaid
+flowchart TD
+  start([availability query]) --> known{companion exists?}
+  known -- no --> f404[404]
+  known -- yes --> valid{start_at < end_at? BR-01}
+  valid -- no --> f400[400 invalid interval]
+  valid -- yes --> active{companion active?}
+  active -- no --> inactive[available = false, companion_active = false]
+  active -- yes --> blocking{a blocking reservation overlaps? BR-02}
+  blocking -- yes --> taken[available = false + the blocking identifiers]
+  blocking -- no --> free[available = true]
+  inactive --> done([200, no reservation changed state])
+  taken --> done
+  free --> done
 ```
 
 ### Activity — Confirm reservation (OP-03)
@@ -315,12 +353,14 @@ flowchart TD
 | Availability vs. Confirm | Consistent: both derive "blocking" from BR-02 alone, and the code uses a single helper `blocking_reservations()` for both. |
 | Cancel vs. state diagram | Consistent: the diagram contains `DRAFT → CANCELLED` and `CONFIRMED → CANCELLED` with the BR-03 guards that the text uses. |
 | Interval semantics | Consistent: BR-01 `[start,end)` and the verification examples for touching intervals `[10,11)` / `[11,12)` in OP-02 and OP-03. |
-| Use-case view vs. text | Consistent: all four goals have a specified behaviour; the Administrator has no goal beyond profile management (outside the baseline), the Notification Service is only a supporting actor. |
+| Use-case view vs. text | Consistent: all four goals have a specified behaviour; the Administrator's only baseline goal is the read-only OP-02 (its trigger is "anyone"), profile management lies outside the four operations; the Notification Service is only a supporting actor. |
 | Requirement vs. design decision | No requirement names a technology. SQLite, Django and UUIDs live in `architecture-and-decisions.md`, not in REQ-xx. |
 | Uncertainty vs. invented precision | The 24 h windows are declared as team-chosen values with a source in the C01 assumption; the parallel-confirmation limit is an explicit TBD. |
 
 ## Baseline v0.1 — team approval
-Approved by the team on **2026-09-21** (Pavel Marszalek, Tobias Janča) as the starting state of the running application. The change below was applied only after that.
+Baseline v0.1 was written and approved by **Pavel Marszalek** on **2026-09-21** as the starting state of the running application. Change C02 was analysed and applied on top of it in the same working session, so both baselines reached the repository in a single commit (PR #3) — the document records the order of the work, not a separate commit per baseline.
+
+**Tobias Janča** reviewed this specification and confirmed baseline v0.1 on **2026-09-21**. That review produced the corrections recorded in [evidence-and-evolution.md](evidence-and-evolution.md): the OP-06 verification examples that were specified but never run, the missing parts of the OP-06 operation template, and the activity diagrams for OP-01 and OP-02.
 
 ---
 
@@ -416,6 +456,14 @@ Approved by the team on **2026-09-21** (Pavel Marszalek, Tobias Janča) as the s
 **Success postcondition:** `status = REJECTED`; `decided_by` is set; the reservation stops blocking the companion; the state is terminal (BR-03).
 
 **State change:** `PENDING_APPROVAL → REJECTED`
+
+**Referenced rules:** BR-02, BR-03, BR-04, BR-05, BR-06.
+
+**Main success scenario:**
+1. The companion opens a request that is awaiting their decision.
+2. The system verifies the actor (BR-04, BR-06), the state and the deadline (BR-05).
+3. The system sets `REJECTED` and records `decided_by`.
+4. The reservation stops blocking the companion (BR-02) and the system returns the state.
 
 **Alternative / failure outcomes:** the same as OP-05 except the overlap check, which a rejection does not need.
 

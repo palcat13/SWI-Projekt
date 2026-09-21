@@ -4,7 +4,7 @@
 
 | Area | Choice |
 |---|---|
-| Language | Python 3.12 |
+| Language | Python 3.10+ (tested on 3.10 and 3.12) |
 | Web framework | Django 5.2 LTS |
 | REST API | Django REST Framework (DRF) |
 | Database | SQLite (file `src/db.sqlite3`) |
@@ -53,13 +53,13 @@ Notification Service                 ← external boundary, NOT implemented yet
 
 ### D2 — Django + Django REST Framework
 - **Context:** Any stack is allowed; the team must support it and justify it.
-- **Decision:** Python 3.12, Django 5.2 LTS, DRF for the REST API.
+- **Decision:** Python 3.10+, Django 5.2 LTS, DRF for the REST API.
 - **Consequences:** Migrations and admin come for free; validation in DRF serializers. We are tied to Django's ORM and conventions (apps, `manage.py`).
 
 ### D3 — SQLite as the database for now
 - **Context:** CP1 and spike A need a real database; we want zero setup for the team.
 - **Decision:** SQLite via Django's default backend. No DB-specific SQL; everything goes through the ORM and migrations.
-- **Consequences:** Runs immediately from a clean checkout. SQLite allows only one writer at a time and does not support `select_for_update` row locking, so enforcing the overlap rule under concurrent confirmations will be weak. If the team picks Q (scale/concurrency) as its future pressure, the plan is to move to PostgreSQL (a settings change plus re-running migrations).
+- **Consequences:** Runs immediately from a clean checkout. SQLite allows only one writer at a time and does not support `select_for_update` row locking, so enforcing the overlap rule under concurrent confirmations will be weak. If concurrent confirmations become a real concern (outside our selected C01 pressure, which is C), the plan is to move to PostgreSQL (a settings change plus re-running migrations).
 
 ### D4 — pytest + pytest-django for automated checks
 - **Context:** The walking skeleton needs an automated check.

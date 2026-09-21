@@ -25,6 +25,7 @@ Does a `Reservation` survive a round trip through a real database (SQLite) via t
 
 ## Observed result
 - `pytest` (2026-09-14, Python 3.12.3, Django 5.2.17, DRF 3.18.1): **12 passed** (10 CP1 tests + 2 spike tests).
+- Re-run by the second team member on their own checkout after PR #2 (2026-09-14, Python 3.10.12): **14 passed** (12 CP1 tests including the `activity` validation + 2 spike tests); `manage.py check` reports no issues and `makemigrations --check` detects no missing migrations.
 - **The first run of the spike test failed:** the test expected `18:30 Europe/Prague` = `16:30 UTC`, but the DB returned `17:30 UTC`. The database was right. 30 March 2030 is still winter time (CET, UTC+1); the switch to summer time happens on 31 March. The test's expectation was wrong, not the persistence. After fixing the expectation the test passes.
 - The DB rejected a reservation with `start_at == end_at` via `IntegrityError` (check constraint `reservation_start_before_end`).
 - Manual check:
@@ -41,8 +42,8 @@ Does a `Reservation` survive a round trip through a real database (SQLite) via t
 - **Times are always stored and compared in UTC** (`USE_TZ = True`). The API accepts ISO-8601 with an offset; conversion to local time is only a presentation concern. The overlap rule will therefore compare UTC intervals, and around DST changes it will behave correctly.
 - **Tests with local times must not assume a fixed offset.** Expected values are written directly in UTC (a lesson from the failed first run).
 - **The `start_at < end_at` invariant is enforced twice:** in the serializer (a friendly `400`) and as a DB constraint (a safety net against bypassing the API).
-- **Open (for the future pressure):** SQLite does not support row locking (`select_for_update`). The rule "confirmed reservations must not overlap" under concurrent confirmations is not verified yet. This is a candidate for the Q pressure and for moving to PostgreSQL (see D3).
-- **Still to do for the C01 DoD:** a second team member reviews this change and re-runs `pytest` + the manual check from the README on a clean checkout.
+- **Open (for the future pressure):** SQLite does not support row locking (`select_for_update`). The rule "confirmed reservations must not overlap" under concurrent confirmations is not verified yet. This is a future scaling concern outside our selected C pressure; moving to PostgreSQL would address it (see D3).
+- **Review:** the spike change (PR #1) was reviewed and approved by the second team member before merging; the tests were re-run on their checkout (see *Observed result*).
 
 ---
 
@@ -56,46 +57,74 @@ Does a `Reservation` survive a round trip through a real database (SQLite) via t
 A Django + DRF application (`src/`), a REST interface without a UI. All operations of baseline v0.2 are runnable: `POST /reservations`, `GET /companions/{id}/availability`, and `POST /reservations/{uuid}/confirm|cancel|approve|reject`, plus the `expire_pending_approvals` command.
 
 ## Verification examples actually run
-**Automated:** `pytest` (2026-09-21, Python 3.12.3, Django 5.2.17, DRF 3.18.1) → **50 passed**. Per operation: `test_availability.py` (9), `test_confirm.py` (10), `test_cancel.py` (10), `test_approve.py` (7), plus the CP1 create tests and the C01 persistence spike. Boundaries covered: touching intervals `[10,11)` / `[11,12)`, cancellation 23 h 59 min vs. 24 h 01 min before the start, approval 1 s after the deadline, a pending request before and after its deadline, two conflicting confirmations in sequence.
+**Automated:** `pytest` → **50 passed** at the time of PR #3 (2026-09-21, Python 3.12.3, Django 5.2.17, DRF 3.18.1). During the team review the second member added the two OP-06 examples that the specification lists but nobody had run, and re-ran the suite on their own checkout (Python 3.10.12): **52 passed**. Per operation: `test_availability.py` (9), `test_confirm.py` (10), `test_cancel.py` (10), `test_approve.py` (9, OP-05 + OP-06 + expiry), plus the CP1 create tests and the C01 persistence spike. Boundaries covered: touching intervals `[10,11)` / `[11,12)`, cancellation 23 h 59 min vs. 24 h 01 min before the start, approval 1 s after the deadline, a pending request before and after its deadline, two conflicting confirmations in sequence.
 
-**Manual through a running server** — `scripts/demo_c02.sh` (reproducible, migrates + seeds + starts the server on port 8765). Actual output:
+**Manual through a running server** — `scripts/demo_c02.sh` (reproducible, migrates + seeds + starts the server on port 8765). Verbatim output of the run from 2026-09-21 after the review, one successful and one negative example per operation:
 
 ```
 ===== OP-01 Create Reservation =====
+
 --- success: new DRAFT
-{"id":"eacee63e-dd0e-4189-9833-77aea28da028","status":"DRAFT"}                         HTTP 201
+{"id":"13b7a891-cf9a-4623-ac3a-3bc773d51d9c","status":"DRAFT"}
+HTTP 201
+
 --- negative: end_at before start_at
-{"end_at":["end_at must be after start_at."]}                                          HTTP 400
-
+{"end_at":["end_at must be after start_at."]}
+HTTP 400
 ===== OP-02 Check Availability =====
+
 --- success: free slot (only DRAFTs so far)
-{"companion_id":4,"available":true,"companion_active":true,"blocking_reservations":[]}  HTTP 200
+{"companion_id":1,"start_at":"2026-09-28T16:18:14.500033Z","end_at":"2026-09-28T18:18:14.500033Z","available":true,"companion_active":true,"blocking_reservations":[]}
+HTTP 200
+
 --- negative: invalid interval
-{"end_at":["end_at must be after start_at."]}                                          HTTP 400
-
+{"end_at":["end_at must be after start_at."]}
+HTTP 400
 ===== OP-03 Confirm Reservation =====
+
 --- success: DRAFT -> CONFIRMED
-{"id":"582422f4-5628-42ba-8b72-979647af7831","status":"CONFIRMED","approval_deadline":null}  HTTP 200
+{"id":"d293a60d-5983-4f87-906c-4b74220f6ed8","status":"CONFIRMED","approval_deadline":null}
+HTTP 200
+
 --- boundary: the slot is now unavailable
-{"available":false,"blocking_reservations":["582422f4-5628-42ba-8b72-979647af7831"]}    HTTP 200
+{"companion_id":1,"start_at":"2026-09-28T16:18:14.500033Z","end_at":"2026-09-28T18:18:14.500033Z","available":false,"companion_active":true,"blocking_reservations":["d293a60d-5983-4f87-906c-4b74220f6ed8"]}
+HTTP 200
+
 --- negative: overlapping confirmation
-{"error":"OVERLAP","detail":"The companion is not available for this interval."}        HTTP 409
-
+{"error":"OVERLAP","detail":"The companion is not available for this interval."}
+HTTP 409
 ===== OP-04 Cancel Reservation =====
+
 --- success: CONFIRMED cancelled 7 days ahead
-{"id":"582422f4-5628-42ba-8b72-979647af7831","status":"CANCELLED"}                      HTTP 200
+{"id":"d293a60d-5983-4f87-906c-4b74220f6ed8","status":"CANCELLED","approval_deadline":null}
+HTTP 200
+
 --- negative: CONFIRMED within the 24 h notice (starts in 12 h)
-{"error":"TOO_LATE","detail":"A confirmed reservation can only be cancelled 24 h before its start."}  HTTP 409
-
+{"error":"TOO_LATE","detail":"A confirmed reservation can only be cancelled 24 h before its start."}
+HTTP 409
 ===== OP-05 / OP-06 Approve and Reject (v0.2) =====
---- success: confirmation of an approval-requiring companion -> PENDING_APPROVAL
-{"id":"760d416f-2821-4f20-a87f-64fe5ac12f3e","status":"PENDING_APPROVAL","approval_deadline":"2026-09-22T16:02:18.690014Z"}  HTTP 200
---- negative: the customer cannot approve their own request
-{"error":"FORBIDDEN_ACTOR","detail":"Only the booked companion can decide about this request."}  HTTP 403
---- success: the booked companion approves
-{"id":"760d416f-2821-4f20-a87f-64fe5ac12f3e","status":"CONFIRMED"}                      HTTP 200
 
+--- success: confirmation of an approval-requiring companion -> PENDING_APPROVAL
+{"id":"1e7dfb80-41c6-4668-b85d-532b8a46f031","status":"PENDING_APPROVAL","approval_deadline":"2026-09-22T16:18:15.343002Z"}
+HTTP 200
+
+--- negative: the customer cannot approve their own request
+{"error":"FORBIDDEN_ACTOR","detail":"Only the booked companion can decide about this request."}
+HTTP 403
+
+--- success: the booked companion approves
+{"id":"1e7dfb80-41c6-4668-b85d-532b8a46f031","status":"CONFIRMED","approval_deadline":"2026-09-22T16:18:15.343002Z"}
+HTTP 200
+
+--- negative: the customer cannot reject the request
+{"error":"FORBIDDEN_ACTOR","detail":"Only the booked companion can decide about this request."}
+HTTP 403
+
+--- success: the booked companion rejects another request
+{"id":"dd42c545-4439-4c86-a5db-30ec247308db","status":"REJECTED","approval_deadline":"2026-09-21T17:18:14.663836Z"}
+HTTP 200
 ===== expiry of the approval window =====
+
 --- expire_pending_approvals (one request past its deadline)
 expired=1
 ```
@@ -104,6 +133,10 @@ expired=1
 1. **C01 domain rule vs. the C02 baseline.** The C01 Project Frame required approval of *every* reservation, but C02 forbids `Approve` in baseline v0.1. **Resolution:** the source at fault was the scope of the rule, not the code. BR-04 is deliberately relaxed in v0.1 (direct confirmation) and change C02 brings it back for companions with `requires_approval = true`. Both documents now say so explicitly, and the C01 state table was rewritten into the v0.2 transitions.
 2. **The verification example was wrong, not the implementation.** The first demo run returned `400 "Datetime has wrong format"` for availability. The cause was the example: the `+02:00` offset in the URL query decodes as a space. The API was right; we fixed the script (`curl --data-urlencode`) and the README now says the query must be URL-encoded.
 3. **Two sources of truth about expiry.** Marking `EXPIRED` by a command alone would mean that availability lies until somebody runs it. **Resolution:** the deadline is data and every availability/overlap query respects it (D9); the command only materialises the state. The residual duality is recorded as a driver for C03.
+
+4. **A specified example that nobody ran.** OP-06 Reject listed three verification examples, but only the successful one existed as a test and the demo script did not exercise `reject` at all. **Resolution:** the source at fault was neither the specification nor the implementation — the coverage was. Both negative examples (`403` for the customer, `409 INVALID_STATE` for a `DRAFT`) were added as tests and to the demo script, and both passed against unchanged application code. OP-06 was also missing *Referenced rules* and a *Main success scenario*, which the operation template requires; they were added.
+
+5. **The approval record did not match how the work actually happened.** The specification stated that the team had approved v0.1 and that the change was applied only afterwards, but both baselines were written in one session and merged in a single commit (PR #3), so nothing in the repository backs that sequence. **Resolution:** the source at fault was the record, not the process. The approval section now names who wrote and approved v0.1, states that the change analysis followed in the same session, and dates the second member's review separately.
 
 ## Change impact summary
 Create (REQ-01), the cancellation boundary (REQ-05), idempotency (REQ-06), BR-01 and BR-05 are **unchanged**. What changed: BR-02 (the set of blocking states), BR-04 (back in force), OP-03 (splits into a request and a decision), the result of OP-02 (a consequence of BR-02), BR-03 (extended by `PENDING_APPROVAL`), plus three new states and two new operations for an actor that already existed (the Companion). Details in *C02 change impact* in [specification.md](specification.md).
@@ -122,4 +155,4 @@ Create (REQ-01), the cancellation boundary (REQ-05), idempotency (REQ-06), BR-01
 5. Real authentication instead of `actor_user_id` (D7).
 
 ## Commit / tag
-Branch `c02-baseline`, tag `v0.2` to be created on merge to `main`.
+Baseline v0.2 was merged to `main` in PR #3, merge commit `e0f3ced`. The corrections from the team review (the OP-06 examples, the two activity diagrams, this evidence) follow in the review commit on top of it. The state of the application for CP1 is marked by the annotated tag **`v0.2`** — `git tag -l v0.2` on `main` must list it; if it does not, the tag was never pushed and this line is the place to notice it.

@@ -43,6 +43,26 @@ def test_companion_rejects_pending_request(api_client, approval_companion, pendi
 
 
 @pytest.mark.django_db
+def test_customer_cannot_reject_request(api_client, customer, pending):
+    response = decide(api_client, pending, customer, "reject")
+
+    assert response.status_code == 403
+    assert response.data["error"] == "FORBIDDEN_ACTOR"
+    pending.refresh_from_db()
+    assert pending.status == ReservationStatus.PENDING_APPROVAL
+
+
+@pytest.mark.django_db
+def test_cannot_reject_a_draft(api_client, approval_companion, make_reservation):
+    reservation = make_reservation(approval_companion)
+
+    response = decide(api_client, reservation, approval_companion.user, "reject")
+
+    assert response.status_code == 409
+    assert response.data["error"] == "INVALID_STATE"
+
+
+@pytest.mark.django_db
 def test_customer_cannot_approve_own_request(api_client, customer, pending):
     response = decide(api_client, pending, customer, "approve")
 
