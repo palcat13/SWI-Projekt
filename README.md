@@ -11,6 +11,7 @@ Reservation system for booking a companion for social activities (non-sexual com
 ## Documentation
 
 - [Intent and change (Project Frame)](docs/intent-and-change.md)
+- [Specification — baseline v0.2](docs/specification.md)
 - [Architecture and decisions](docs/architecture-and-decisions.md)
 - [Evidence and evolution](docs/evidence-and-evolution.md)
 
@@ -69,6 +70,37 @@ curl -X POST http://127.0.0.1:8000/reservations \
 ```
 
 Admin UI: `python manage.py createsuperuser`, then http://127.0.0.1:8000/admin/.
+
+## API — baseline v0.2
+
+| Operation | Endpoint | Body / query |
+|---|---|---|
+| OP-01 Create | `POST /reservations` | `companion_id`, `customer_id`, `start_at`, `end_at`, `activity` |
+| OP-02 Check availability | `GET /companions/{id}/availability` | `start_at`, `end_at` (URL-encoded ISO-8601) |
+| OP-03 Confirm | `POST /reservations/{uuid}/confirm` | `actor_user_id` (the customer) |
+| OP-04 Cancel | `POST /reservations/{uuid}/cancel` | `actor_user_id` (the customer or the companion) |
+| OP-05 Approve | `POST /reservations/{uuid}/approve` | `actor_user_id` (the booked companion) |
+| OP-06 Reject | `POST /reservations/{uuid}/reject` | `actor_user_id` (the booked companion) |
+
+Failures return `400` (invalid input), `403 FORBIDDEN_ACTOR`, `404` (unknown) or `409` with a code
+(`INVALID_STATE`, `OVERLAP`, `INACTIVE_RESOURCE`, `PAST_INTERVAL`, `TOO_LATE`, `EXPIRED`).
+The behaviour of every operation, including boundaries, is specified in [docs/specification.md](docs/specification.md).
+
+Reservations awaiting approval stop blocking the companion at their deadline; the state is written by:
+
+```bash
+cd src && python manage.py expire_pending_approvals   # prints expired=<n>
+```
+
+## Demo of all operations
+
+```bash
+scripts/demo_c02.sh      # from the repository root, with the venv installed
+```
+
+The script migrates, seeds demo data, starts a server on port 8765 and runs one successful and one
+negative example of every operation. The recorded output is in
+[docs/evidence-and-evolution.md](docs/evidence-and-evolution.md).
 
 ## CP1 walking skeleton
 

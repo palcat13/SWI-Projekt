@@ -31,3 +31,17 @@ class ReservationCreateSerializer(serializers.ModelSerializer):
                 {"customer_id": "A companion cannot book themselves."}
             )
         return attrs
+
+
+class AvailabilityQuerySerializer(serializers.Serializer):
+    start_at = serializers.DateTimeField()
+    end_at = serializers.DateTimeField()
+
+    def validate(self, attrs):
+        if attrs["start_at"] >= attrs["end_at"]:
+            raise serializers.ValidationError({"end_at": "end_at must be after start_at."})
+        return attrs
+
+
+class ActorSerializer(serializers.Serializer):
+    actor_user_id = serializers.PrimaryKeyRelatedField(queryset=get_user_model().objects.all())
