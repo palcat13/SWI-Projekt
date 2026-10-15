@@ -207,6 +207,10 @@ eight Mermaid diagrams were rendered with `mmdc` to confirm they parse.
    project hit in C01 with two future pressures, so the old one is explicitly marked superseded.
 3. Re-checking H2 against the written code found that `post()` lives once on a shared `TransitionView`
    base, not on each view class. **The diagram was corrected to match the code**, not the reverse.
+4. A review of the restructured code found a **regression introduced by C03 itself**: `AvailabilityView`
+   read the clock twice, so a pending approval expiring between the two reads could be reported as
+   available and as blocking in the same response. Fixed by resolving `now` once; pinned by a test that
+   was confirmed to fail against the broken version.
 
 **AS-IS → TO-BE delta:** seven `CHANGE` rows, four `KEEP`, three `VERIFY` (section J).
 
@@ -217,10 +221,11 @@ window and the deadline), `notifications.py` (port + logging implementation, dis
 adapter; `expire_pending_approvals` delegates to the lifecycle owner. **No model field changed and no
 migration was generated.**
 
-**Behaviour verification:** `pytest` → **60 passed** (the 52 C02 behaviour tests unchanged, plus 5
-architecture-rule tests and 3 notification tests). `manage.py check` → no issues.
+**Behaviour verification:** `pytest` → **61 passed** (the 52 C02 behaviour tests unchanged, plus 5
+architecture-rule tests, 3 notification tests and 1 regression test). `manage.py check` → no issues.
 `makemigrations --check --dry-run` → `No changes detected`. `scripts/demo_c02.sh` ran end to end against
-a live server with byte-identical responses to the pre-refactor run. Full table in L1.
+a live server; every status code, error code and response shape matched the pre-refactor run, with only
+ids and timestamps differing as they must between two runs. Full table in L1.
 
 **Architecture conformance rule + result:** *only `lifecycle.py` may write `Reservation.status`, and no
 domain module may import the web framework.* Checked by `scripts/check_architecture.py` (AST scan, also
@@ -240,6 +245,7 @@ to detect the violation it is meant to prevent.
 - **Authentication is still `actor_user_id` in the body** (D7, DR-5). It is now applied in one element
   per operation instead of four views, so replacing it is a contained change — but it is not done.
 
-**Commit / tag:** branch `c03-architecture`, on top of `v0.2` (`f764c83`). The behaviour of baseline
-v0.2 is unchanged, so no new baseline tag is created; the C03 structure is identified by the merge
-commit of this branch.
+**Commit / tag:** the C03 design and the lifecycle-owner refactor are commit **`3d28f6e`** on branch
+`c03-architecture`, on top of tag `v0.2` (`f764c83`); the review corrections above follow it on the same
+branch. Baseline v0.2 behaviour is unchanged, so no new baseline tag is created — `v0.2` remains the tag
+for the application's behaviour and `3d28f6e` identifies its C03 structure.

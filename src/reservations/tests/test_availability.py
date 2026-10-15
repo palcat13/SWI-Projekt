@@ -126,3 +126,26 @@ def test_unknown_companion_returns_404(api_client, db):
     )
 
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_verdict_and_blocking_list_are_read_from_one_clock(
+    monkeypatch, api_client, approval_companion, make_reservation
+):
+    start = timezone.now() + timedelta(days=7)
+    deadline = timezone.now() + timedelta(minutes=5)
+    make_reservation(
+        approval_companion,
+        start_at=start,
+        status=ReservationStatus.PENDING_APPROVAL,
+        approval_deadline=deadline,
+    )
+    ticks = iter([deadline - timedelta(seconds=1), deadline + timedelta(seconds=1)])
+    monkeypatch.setattr("django.utils.timezone.now", lambda: next(ticks, deadline))
+
+    response = api_client.get(
+        f"/companions/{approval_companion.pk}/availability",
+        {"start_at": start.isoformat(), "end_at": (start + timedelta(hours=2)).isoformat()},
+    )
+
+    assert response.data["available"] is not bool(response.data["blocking_reservations"])

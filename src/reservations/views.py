@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -52,13 +53,14 @@ class AvailabilityView(APIView):
         start_at = query.validated_data["start_at"]
         end_at = query.validated_data["end_at"]
 
-        blocking = availability.blocking_reservations(companion, start_at, end_at)
+        now = timezone.now()
+        blocking = availability.blocking_reservations(companion, start_at, end_at, now=now)
         return Response(
             {
                 "companion_id": companion.pk,
                 "start_at": start_at,
                 "end_at": end_at,
-                "available": availability.is_available(companion, start_at, end_at),
+                "available": availability.is_available(companion, start_at, end_at, now=now),
                 "companion_active": companion.is_active,
                 "blocking_reservations": [str(pk) for pk in blocking.values_list("id", flat=True)],
             }

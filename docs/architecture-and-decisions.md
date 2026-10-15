@@ -812,6 +812,9 @@ future pressures, so the old list is now explicitly marked as superseded by sect
 
 ## J — AS-IS → TO-BE delta
 
+The AS-IS line numbers below refer to commit `f764c83` (tag `v0.2`), the state Part A mapped.
+After K they point at different code.
+
 | Area | AS-IS (Part A) | TO-BE (G2/H2) | Action |
 |---|---|---|---|
 | who assigns `Reservation.status` | three views: `views.py:104`, `:108`, `:141`, `:168`, `:181`, plus the `expire_pending_approvals` command | only the Reservation Lifecycle element | `CHANGE` |
@@ -861,10 +864,10 @@ Verified on 2026-10-15, Python 3.10.12, Django 5.2.17, DRF 3.18.1, after the res
 | **Boundary** — cancellation 23 h 59 min vs. 24 h 01 min before the start | pass | `tests/test_cancel.py:53` and `:65` |
 | **Concurrency — REQ-04** | pass **sequentially only** | `tests/test_confirm.py:94`. True parallelism is still not verified; this is ADR-01's accepted consequence 1, not an oversight. |
 | **New — DR-3 notification boundary** | pass | `tests/test_notifications.py` — the notification is dispatched only after commit, a raising port leaves the reservation `CONFIRMED`, and a request awaiting approval emits its own event |
-| **Whole suite** | **60 passed** (52 C02 behaviour tests, unchanged and untouched by the refactor, + 5 architecture-rule tests + 3 notification tests) | `pytest` |
+| **Whole suite** | **61 passed** (52 C02 behaviour tests, unchanged and untouched by the refactor, + 5 architecture-rule tests + 3 notification tests + 1 regression test from the review below) | `pytest` |
 | **Django checks** | `System check identified no issues (0 silenced).` | `manage.py check` |
 | **Schema unchanged** | `No changes detected` | `manage.py makemigrations --check --dry-run` |
-| **End-to-end through a running server** | all six operations, one success and one negative example each, byte-identical responses to the pre-refactor run | `scripts/demo_c02.sh` |
+| **End-to-end through a running server** | all six operations, one success and one negative example each; every status code, error code and response shape identical to the pre-refactor run (the ids and timestamps differ, as they must between two runs) | `scripts/demo_c02.sh` |
 
 Two observable differences from the Part A trace, both intended and neither visible to a client:
 
@@ -875,6 +878,14 @@ Two observable differences from the Part A trace, both intended and neither visi
    transaction. Nothing was written on either path, so the outcome is the same.
 
 Part A's trace remains an accurate record of commit `f764c83`; it is not retro-fitted.
+
+**One regression was introduced by the restructuring and caught in review.** `AvailabilityView` ended up
+calling `blocking_reservations()` for the list and `is_available()` for the verdict, each defaulting to
+its own `timezone.now()`. A `PENDING_APPROVAL` whose deadline fell between the two calls would be
+reported as `available: true` *and* listed as blocking — contradicting the specification's own
+consistency row, "a pending reservation stops blocking at the moment of the deadline". The view now
+resolves `now` once and passes it to both. `tests/test_availability.py:132` pins it, and the test was
+confirmed to fail against the broken version before the fix was kept.
 
 ## L2 — Architecture conformance
 
