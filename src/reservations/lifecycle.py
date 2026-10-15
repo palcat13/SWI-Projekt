@@ -42,20 +42,27 @@ def _notify_after_commit(event: str, reservation: Reservation) -> None:
     transaction.on_commit(lambda: notifications.get_port().notify(event, reservation))
 
 
-def _is_blocked(reservation: Reservation, now: datetime) -> bool:
+def _is_blocked(
+    reservation: Reservation, now: datetime, policy: approval.ApprovalPolicy
+) -> bool:
     return availability.blocking_reservations(
         reservation.companion,
         reservation.start_at,
         reservation.end_at,
         exclude_id=reservation.id,
         now=now,
+        policy=policy,
     ).exists()
 
 
 def confirm(
-    reservation: Reservation, actor: AbstractBaseUser, now: datetime | None = None
+    reservation: Reservation,
+    actor: AbstractBaseUser,
+    now: datetime | None = None,
+    policy: approval.ApprovalPolicy | None = None,
 ) -> TransitionOutcome:
     now = now or timezone.now()
+    policy = policy or approval.get_policy()
     with transaction.atomic():
         reservation = _reload(reservation)
         if reservation.customer_id != actor.pk:
@@ -72,15 +79,15 @@ def confirm(
             raise TransitionRefused(
                 CONFLICT, "PAST_INTERVAL", "The reservation interval has already started."
             )
-        if _is_blocked(reservation, now):
+        if _is_blocked(reservation, now, policy):
             raise TransitionRefused(
                 CONFLICT, "OVERLAP", "The companion is not available for this interval."
             )
 
-        if reservation.companion.requires_approval:
+        if policy.requires_approval(reservation.companion):
             reservation.status = ReservationStatus.PENDING_APPROVAL
             reservation.approval_requested_at = now
-            reservation.approval_deadline = approval.deadline_for(reservation, now)
+            reservation.approval_deadline = policy.deadline_for(reservation, now)
             event = notifications.AWAITING_APPROVAL
         else:
             reservation.status = ReservationStatus.CONFIRMED
@@ -91,9 +98,14 @@ def confirm(
 
 
 def cancel(
-    reservation: Reservation, actor: AbstractBaseUser, now: datetime | None = None
+    reservation: Reservation,
+    actor: AbstractBaseUser,
+    now: datetime | None = None,
+    policy: approval.ApprovalPolicy | None = None,
 ) -> TransitionOutcome:
     now = now or timezone.now()
+    policy = policy or approval.get_policy()
+    expired = False
     with transaction.atomic():
         reservation = _reload(reservation)
         allowed_actors = {reservation.customer_id, reservation.companion.user_id}
@@ -108,7 +120,12 @@ def cancel(
                 CONFLICT, "INVALID_STATE", f"A {reservation.status} reservation cannot be cancelled."
             )
 
-        if reservation.status == ReservationStatus.CONFIRMED:
+        if approval.effective_status(reservation, now, policy) == ReservationStatus.EXPIRED:
+            reservation.status = ReservationStatus.EXPIRED
+            reservation.save()
+            expired = True
+
+        elif reservation.status == ReservationStatus.CONFIRMED:
             if now > reservation.start_at - CONFIRMED_CANCEL_NOTICE:
                 raise TransitionRefused(
                     CONFLICT,
@@ -120,9 +137,15 @@ def cancel(
                 CONFLICT, "TOO_LATE", "The reservation interval has already started."
             )
 
-        reservation.status = ReservationStatus.CANCELLED
-        reservation.save()
-        _notify_after_commit(notifications.CANCELLED, reservation)
+        if not expired:
+            reservation.status = ReservationStatus.CANCELLED
+            reservation.save()
+            _notify_after_commit(notifications.CANCELLED, reservation)
+
+    if expired:
+        raise TransitionRefused(
+            CONFLICT, "EXPIRED", "The approval window closed; the reservation is no longer active."
+        )
     return TransitionOutcome(reservation)
 
 
@@ -131,8 +154,10 @@ def _decide(
     actor: AbstractBaseUser,
     target_status: str,
     now: datetime | None = None,
+    policy: approval.ApprovalPolicy | None = None,
 ) -> TransitionOutcome:
     now = now or timezone.now()
+    policy = policy or approval.get_policy()
     expired = False
     with transaction.atomic():
         reservation = _reload(reservation)
@@ -149,12 +174,14 @@ def _decide(
                 f"Reservation is {reservation.status}, not PENDING_APPROVAL.",
             )
 
-        if reservation.approval_deadline <= now:
+        if approval.effective_status(reservation, now, policy) == ReservationStatus.EXPIRED:
             reservation.status = ReservationStatus.EXPIRED
             reservation.save()
             expired = True
         else:
-            if target_status == ReservationStatus.CONFIRMED and _is_blocked(reservation, now):
+            if target_status == ReservationStatus.CONFIRMED and _is_blocked(
+                reservation, now, policy
+            ):
                 raise TransitionRefused(
                     CONFLICT, "OVERLAP", "The interval is already blocked by another reservation."
                 )
@@ -169,16 +196,28 @@ def _decide(
 
 
 def approve(
-    reservation: Reservation, actor: AbstractBaseUser, now: datetime | None = None
+    reservation: Reservation,
+    actor: AbstractBaseUser,
+    now: datetime | None = None,
+    policy: approval.ApprovalPolicy | None = None,
 ) -> TransitionOutcome:
-    return _decide(reservation, actor, ReservationStatus.CONFIRMED, now)
+    return _decide(reservation, actor, ReservationStatus.CONFIRMED, now, policy)
 
 
 def reject(
-    reservation: Reservation, actor: AbstractBaseUser, now: datetime | None = None
+    reservation: Reservation,
+    actor: AbstractBaseUser,
+    now: datetime | None = None,
+    policy: approval.ApprovalPolicy | None = None,
 ) -> TransitionOutcome:
-    return _decide(reservation, actor, ReservationStatus.REJECTED, now)
+    return _decide(reservation, actor, ReservationStatus.REJECTED, now, policy)
 
 
-def expire_overdue_approvals(now: datetime | None = None) -> int:
-    return approval.overdue_queryset(now).update(status=ReservationStatus.EXPIRED)
+def reconcile_overdue_approvals(
+    now: datetime | None = None, policy: approval.ApprovalPolicy | None = None
+) -> int:
+    now = now or timezone.now()
+    policy = policy or approval.get_policy()
+    return Reservation.objects.filter(policy.overdue_q(now)).update(
+        status=ReservationStatus.EXPIRED
+    )

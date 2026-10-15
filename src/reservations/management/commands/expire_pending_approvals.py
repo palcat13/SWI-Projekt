@@ -7,5 +7,5 @@ class Command(BaseCommand):
     help = "Mark PENDING_APPROVAL reservations whose approval deadline has passed as EXPIRED."
 
     def handle(self, *args, **options):
-        expired = lifecycle.expire_overdue_approvals()
+        expired = lifecycle.reconcile_overdue_approvals()
         self.stdout.write(f"expired={expired}")

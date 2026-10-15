@@ -1,0 +1,305 @@
+SWI · Cvičení C05 — Detailed Design
+Od architektury k návrhovému záměru a unit testům
+
+(Navazuje na C03, viz tasks/C03.txt a tasks/C03-architecture.txt.)
+
+Proč Detailed Design?
+
+V C03 jste rozhodli KDE budou hlavní odpovědnosti a hranice systému. Detailed Design jde o úroveň
+níž a říká JAK má být konkrétní software unit / component uvnitř navržena, aby:
+  - byl explicitní návrhový záměr;
+  - byly jasné významné metody, operace, algoritmy, data a stavy;
+  - byla jasná rozhraní a kontrakty;
+  - šlo z návrhu přímo odvodit unit/component testy;
+  - implementace nebyla jen „kód, který zrovna funguje".
+
+  >> DD je technický základ pro implementaci a unit verification.
+  >> NENÍ to zpětný popis hotového kódu.
+
+Co budete dělat
+  1. Vyberete jednu architecture responsibility / software unit.
+  2. Odvodíte její detailed responsibilities.
+  3. Navrhnete structure, data/state a interfaces.
+  4. Navrhnete methods, algorithms a dynamic behavior.
+  5. Odvodíte unit/component testy z DD.
+  6. Implementujete a ověříte design <-> code consistency.
+
+I jednoduchý systém má DD
+
+Například objednání jízdenky:
+
+  BuyTicket
+   ├─ validate request
+   ├─ determine fare
+   ├─ calculate price
+   ├─ reserve seat
+   ├─ create ticket
+   └─ persist result
+
+DD neznamená přidat deset tříd. Znamená například explicitně rozhodnout:
+  - kdo vybírá tarif;
+  - kde je algoritmus ceny;
+  - jaké jsou vstupy/výstupy;
+  - pre/postconditions;
+  - failure behavior;
+  - které unit testy z toho vyplývají.
+
+--------------------------------------------------------------------------------
+1 — Vyberte jednu architecture responsibility / software unit
+
+Proč? DD má rozpracovat jednu existující architektonickou odpovědnost DOVNITŘ, ne znovu navrhovat
+celý systém.
+
+Co udělat? Vyberte jednu část z C03, která obsahuje skutečnou logiku. Např. Reservation lifecycle,
+Availability, Approval handling, Ticket pricing.
+
+Výstup:
+
+  Selected architecture unit / responsibility:
+  Related requirement(s):
+  Related scenario(s):
+  Relevant business rule(s):
+
+Smysl kroku: musí být jasné, UVNITŘ JAKÉ HRANICE teď děláte DD.
+
+--------------------------------------------------------------------------------
+2 — Odvoďte detailed responsibilities
+
+Proč? Nejdřív potřebujete vědět, co všechno musí jednotka uvnitř rozhodnout nebo udělat. Až potom
+dává smysl řešit classes a methods.
+
+Co udělat? Rozložte vybranou responsibility na 3–7 menších responsibilities.
+
+Příklad — Ticket Pricing:
+  - identify passenger category
+  - select applicable fare
+  - calculate base price
+  - apply discount / surcharge
+  - validate pricing conditions
+  - return final price + reason
+
+Výstup:
+  | Detailed responsibility | Why is it needed? |
+  |---|---|
+  | ... | ... |
+
+Smysl kroku: vzniká functional / responsibility view na úrovni DD — návrhový záměr před konkrétní
+strukturou.
+
+--------------------------------------------------------------------------------
+3 — Navrhněte structure, data/state a interfaces
+
+Proč? Teď rozhodujete, kdo co vlastní, která data/state používá a přes jaký contract spolu prvky
+komunikují. To je základ implementace i test isolation.
+
+Co udělat? Přiřaďte responsibilities konkrétním design elements: class, module, component, policy,
+value object, repository, adapter, interface.
+
+Výstup:
+  | Responsibility | Owner | State/data | Why here? |
+  |---|---|---|---|
+  | ... | ... | ... | ... |
+
+Interface / contract — definujte alespoň jedno významné interface.
+
+Příklad:
+  <<interface>> FarePolicy
+  calculate(passenger, connection, ticketType) : PriceResult
+
+Contract:
+  Preconditions:
+  - passenger category known
+  - connection valid
+
+  Postcondition:
+  - PriceResult contains final price and applied fare
+
+  Failures:
+  - UNSUPPORTED_FARE
+  - INVALID_INPUT
+
+Focused UML structural view: nakreslete jeden focused UML class/component/package diagram.
+Přibližně 4–8 významných prvků. Ukažte interfaces, dependencies a důležité state/data ownership.
+
+Smysl kroku: z diagramu musí být zřejmé, jak je design rozdělen a přes jaké contracts se jeho části
+propojují.
+
+--------------------------------------------------------------------------------
+4 — Navrhněte methods, algorithms a dynamic behavior
+
+Proč? Strukturální diagram nestačí. Unit verification často vychází právě z methods,
+pre/postconditions, algorithms, branches, state transitions a error behavior.
+
+Significant methods / operations — u významných operací uveďte:
+
+  Operation:
+  Responsibility:
+  Input:
+  Output:
+  Preconditions:
+  Postconditions:
+  Side effects:
+  Failure behavior:
+
+Nedokumentujte getters/setters, triviální delegaci ani framework boilerplate.
+
+Algorithm / decision logic: pokud existuje významný algoritmus nebo business rule, udělejte jej
+explicitní pomocí pseudocode, activity diagramu, decision table nebo state machine.
+
+Příklad:
+  base = fareTable[connection]
+  if passenger.student:
+      base = base * studentFactor
+  if ticket.firstClass:
+      base = base + firstClassSurcharge
+  return Money.round(base)
+
+Detailed sequence: ukažte jeden významný scénář uvnitř jednotky.
+
+  C03 architecture level:
+    API -> Reservation Management -> Availability -> Persistence
+
+  C05 DD level:
+    ReservationService -> PolicyResolver -> AvailabilityPolicy -> ReservationRepository
+
+Smysl kroku: musí být explicitní, jak návrh skutečně realizuje významné chování uvnitř jednotky.
+
+--------------------------------------------------------------------------------
+5 — Odvoďte unit/component testy z DD
+
+Proč? Tohle je jeden z hlavních důvodů DD. Jakmile máte contracts, methods, algorithms, state
+transitions a failure behavior, můžete z nich přímo odvodit verification.
+
+  >> Unit tests ověřují návrhový záměr jednotky, ne jen současnou implementaci.
+
+Výstup — minimálně 5 testů:
+
+  | DD element / decision | What must hold? | Test level | Test case |
+  |---|---|---|---|
+  | interface contract | ... | unit/component | ... |
+  | algorithm branch | ... | unit | ... |
+  | state transition | ... | unit/component | ... |
+  | failure behavior | ... | unit | ... |
+  | collaboration | ... | component/integration | ... |
+
+U alespoň dvou testů vysvětlete:
+
+  Selected level:
+  Why this level:
+  What design decision does this test verify?
+
+Smysl kroku: musí být vidět přímá vazba DD decision -> verification.
+
+--------------------------------------------------------------------------------
+6 — Implementujte a ověřte design <-> code
+
+Proč? DD je návrhový záměr. Implementace jej musí realizovat — nebo musí být vědomě změněn samotný
+design.
+
+Co udělat? Implementujte navržený slice a porovnejte planned DD vs actual implementation.
+
+Výstup:
+  | DD decision | Implemented? | Evidence | Action |
+  |---|---|---|---|
+  | ... | YES/PARTLY/NO | file/test | keep / update DD / update code |
+
+Smysl kroku: pokud se design a code liší, NEOPRAVUJTE automaticky diagram podle kódu. Rozhodněte,
+co je správně.
+
+--------------------------------------------------------------------------------
+Jak hluboko má DD jít?
+
+DD má být tak hluboký, aby bylo možné:
+  1. implementovat významná rozhodnutí bez hádání;
+  2. odvodit unit/component tests;
+  3. pochopit algorithm / method / state behavior;
+  4. vidět významná interfaces a dependencies;
+  5. zachovat design intent při změně;
+  6. posoudit maintainability / extensibility tam, kde je relevantní.
+
+Typicky mohou být explicitní:
+  responsibilities
+  classes / modules / components
+  interfaces and contracts
+  methods / operations
+  data structures
+  state and transitions
+  algorithms
+  decision logic
+  error handling
+  dependency direction
+  concurrency behavior
+  persistence behavior
+  configuration / variation points
+
+Co může zůstat jen v kódu?
+  - jednoduché lokální statements;
+  - triviální private helper;
+  - getter/setter;
+  - framework boilerplate;
+  - syntax-level detail;
+  - detail bez významu pro verification nebo budoucí změnu.
+
+Jak poznat, že je DD dostatečný?
+  1. Implementation: jiný developer chápe významná design decisions bez hádání.
+  2. Unit verification: z DD lze odvodit smysluplné unit/component tests.
+  3. Change: je jasné, kde se má změnit konkrétní rule nebo varianta.
+
+--------------------------------------------------------------------------------
+Co odevzdáte?
+
+Do docs/architecture-and-decisions.md:
+
+  ## C05 Detailed Design
+  Selected architecture unit:
+  Detailed responsibilities:
+  Design elements and ownership:
+  Key interface(s) / contract(s):
+  Focused structural view:
+  Detailed sequence:
+  Important methods / operations:
+  Algorithm / decision logic: (if relevant)
+  DD decisions intentionally left to code:
+
+Do docs/evidence-and-evolution.md:
+
+  ## C05 DD Verification Evidence
+  Tests derived from DD:
+  Unit/component tests executed:
+  Design <-> implementation mismatch:
+  Resolution:
+  Remaining design risk:
+  Commit/tag:
+
+--------------------------------------------------------------------------------
+Definition of Done
+
+  ☐ jedna architecture responsibility / unit;
+  ☐ detailed responsibilities;
+  ☐ ownership;
+  ☐ významné interface / contract;
+  ☐ focused structural UML view;
+  ☐ detailed sequence;
+  ☐ významné methods / operations;
+  ☐ algorithm / decision logic, pokud je relevantní;
+  ☐ minimálně 5 testů odvozených z DD;
+  ☐ testy spuštěné;
+  ☐ DD porovnáno s implementací;
+  ☐ commit/tag.
+
+--------------------------------------------------------------------------------
+Hlavní pointa
+
+  Architecture
+     ↓
+  Detailed Design
+     ↓
+  Implementation
+     ↓
+  Unit Verification
+
+DD říká, co má jednotka dělat uvnitř, jaké má významné prvky, interfaces, methods a algorithms
+a co přesně má být ověřeno.
+
+Maintainability a extensibility jsou důsledkem kvalitního návrhového záměru — ne náhradou hlavního
+účelu DD.

@@ -249,3 +249,62 @@ to detect the violation it is meant to prevent.
 `c03-architecture`, on top of tag `v0.2` (`f764c83`); the review corrections above follow it on the same
 branch. Baseline v0.2 behaviour is unchanged, so no new baseline tag is created — `v0.2` remains the tag
 for the application's behaviour and `3d28f6e` identifies its C03 structure.
+
+---
+
+# C05 — DD Verification Evidence
+
+**Unit under design:** Approval handling — the **Approval Policy** element of
+[G2](architecture-and-decisions.md#g2--to-be-static-architecture) plus the approval paths of the
+Reservation Lifecycle element. Requirements REQ-07 … REQ-10; rules BR-02, BR-03, BR-04, BR-05.
+
+**Tests derived from DD:** nine design decisions produced ten tests in
+`src/reservations/tests/test_approval_policy.py`.
+
+| DD element | Test | Level |
+|---|---|---|
+| `deadline_for` contract (`now < deadline <= start_at`) | T-1 | unit |
+| the two branches of the deadline algorithm | T-2 | unit |
+| **AGREEMENT** — `is_live` equals membership of `live_q` | T-3 | component |
+| **TOTALITY** — live ∪ overdue partitions every pending row | T-4 | component |
+| reconciliation materialises only overdue rows, idempotently | T-5 | component |
+| reconciliation does not change what the system means (DR-2) | T-6 | component |
+| a `NULL` deadline is defined, not a crash | T-7, T-7b | unit + component |
+| an effectively expired reservation cannot be cancelled (BR-03) | T-8 | component |
+| the approval window is a variation point | T-9 | unit |
+
+**Unit/component tests executed:** `pytest` → **71 passed** (61 before C05, plus the ten above).
+`manage.py check` → no issues. `makemigrations --check --dry-run` → `No changes detected` — the design
+needed no schema change. `scripts/demo_c02.sh` ran end to end with all fourteen expected HTTP results
+unchanged. `scripts/check_architecture.py` still passes, so the C05 work did not break the ADR-01
+rule: the policy supplies predicates and the lifecycle element remains the only writer of
+`Reservation.status`.
+
+**Design ↔ implementation mismatch:** two, both found by writing the contract before reading the code,
+and neither reachable through the API in a normal run — which is why 61 passing tests had missed them.
+1. A `PENDING_APPROVAL` with no `approval_deadline` crashed the decision path with
+   `TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.datetime'`, and the two
+   SQL predicates both excluded it, so it was neither live nor overdue.
+2. A reservation whose approval window had closed could still be cancelled and stored as `CANCELLED`,
+   although BR-03 declares `EXPIRED` terminal.
+
+**Resolution:** the **design won in both cases** and the code changed, because the specification
+already said what should happen. `live_q` now requires a non-null deadline and `overdue_q` accepts null
+or past, which makes the rule total; `cancel` consults the effective status and refuses with `EXPIRED`.
+The tests are not vacuous: T-4 was run against the pre-DD predicates and fails there, and the two
+behaviour changes were measured on the old code before being changed.
+
+**Remaining design risk:**
+- **The sweeper still has no scheduler.** C05 resolved *what `EXPIRED` means* — a projection being
+  caught up with, now pinned by T-6 — but not *who runs the reconciliation*. Somebody still types the
+  command. DR-2 is half closed.
+- **`set_policy()` is process-global.** Tests that swap the policy must restore it, exactly like
+  `notifications.set_port`. A settings-driven or request-scoped policy would be safer if a second
+  policy ever ships.
+- **The 24 h window still has no external source.** C05 gave it a home and made it injectable; it did
+  not make it right.
+- Everything carried out of C03 is unchanged: REQ-04 under true concurrency, BR-02 unprotected outside
+  the application, the notification transport, and `actor_user_id` instead of authentication.
+
+**Commit / tag:** branch `c05-detailed-design`, on top of `ea9e794` (C03, merged to `main`). Baseline
+v0.2 behaviour is unchanged, so tag `v0.2` still marks the application's behaviour.

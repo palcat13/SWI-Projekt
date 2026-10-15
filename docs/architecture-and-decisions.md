@@ -930,3 +930,353 @@ an attribute write), the serializer's `read_only_fields = ["id", "status"]`, or 
 `reservation.status`. Four tests in `tests/test_architecture.py` pin this behaviour by running the
 checker against synthetic violations and a synthetic non-violation, so the check cannot silently rot
 into one that passes for the wrong reason.
+
+---
+
+# C05 — Detailed Design: Approval handling
+
+Detailed Design of **one** C03 element. This is design intent written *before* the implementation that
+realizes it; section DD-6 reports honestly where the code then diverged and who won.
+
+## DD-1 — Selected architecture unit
+
+| Item | Value |
+|---|---|
+| **Selected architecture unit** | **Approval Policy** from [G2](#g2--to-be-static-architecture), together with the approval-specific behaviour the Reservation Lifecycle element delegates to it (`src/reservations/approval.py`, and the approval paths of `lifecycle.py`) |
+| **Related requirements** | `REQ-07` (a confirmation for a companion requiring approval becomes `PENDING_APPROVAL` with a deadline), `REQ-08` (a live pending request blocks), `REQ-09` (only the booked companion decides), `REQ-10` (after the deadline the request is not approvable and stops blocking) |
+| **Related scenarios** | OP-05 Approve, OP-06 Reject, and the approval branch of OP-03 Confirm |
+| **Relevant business rules** | `BR-04` (only the booked companion approves), `BR-02` (the blocking set includes a live `PENDING_APPROVAL`), `BR-03` (`EXPIRED` is terminal), `BR-05` (the server clock is the only time source) |
+
+Chosen because it is the element with the most design still *open*: driver **DR-2** (the stored status
+and the computed meaning can disagree) has no accepted resolution, and the 24 h window is declared in
+the specification as a team-chosen value and "the first thing to revisit when real data arrives" — a
+variation point with no structure behind it yet.
+
+## DD-2 — Detailed responsibilities
+
+| # | Detailed responsibility | Why is it needed? |
+|---|---|---|
+| **AR-1** | Decide whether a reservation needs approval at all | OP-03 branches on it; today it is an `if` on a boolean column read inside the lifecycle owner, so the rule has no home |
+| **AR-2** | Compute the approval deadline | REQ-07 fixes the formula `min(now + window, start_at)`; the window is a policy value, not a constant of the domain |
+| **AR-3** | Decide whether a pending request is still live or already overdue | REQ-08 and REQ-10 both depend on this one predicate, and it is asked in two different worlds: in memory about one reservation, and in SQL about a set |
+| **AR-4** | Report the *effective* status of a reservation — what its state means now, as opposed to what is stored | DR-2: `EXPIRED` is written by a process that may not have run, so the stored status can lag behind the truth |
+| **AR-5** | Reconcile stored status with effective status for overdue requests | The `EXPIRED` row must eventually exist for reporting and for the customer's view, without ever changing what the system *means* |
+| **AR-6** | Expose the window as a configurable variation point | The specification declares the 24 h value as team-chosen and expected to change; it must be changeable in one place and injectable in tests |
+
+Authority over the decision (BR-04) is deliberately **not** listed: it belongs to the Reservation
+Lifecycle element, which owns every transition (ADR-01). This unit answers *may this still be decided*,
+never *who may decide it*.
+
+## DD-3 — Design elements, ownership and contracts
+
+| Responsibility | Owner | State / data | Why here? |
+|---|---|---|---|
+| AR-1 `requires_approval` | `ApprovalPolicy` | reads `Companion.requires_approval` | The lifecycle owner should ask a question, not read a column and interpret it |
+| AR-2 deadline | `ApprovalPolicy.deadline_for` | reads `Reservation.start_at`, writes nothing | The formula and the window belong to the same element |
+| AR-3 live / overdue | `ApprovalPolicy.is_live`, `.live_q`, `.overdue_q` | reads `status`, `approval_deadline` | One rule, two representations, one owner — the only way they cannot drift |
+| AR-4 effective status | `approval.effective_status()` | pure function of a reservation + `now` + the policy | A projection, not a decision; it writes nothing, so it is safe to call from read paths |
+| AR-5 reconciliation | `lifecycle.reconcile_overdue_approvals()` | **writes** `Reservation.status` | Forced by ADR-01: only the lifecycle element may write `status`. The policy supplies the predicate, the lifecycle owner performs the write. |
+| AR-6 variation point | `FixedWindowApprovalPolicy(window)` + `get_policy()` / `set_policy()`, and a `policy=` parameter on every operation | the window | A default for production, an injected instance for tests — the same shape already used by `NotificationPort` |
+
+### Key interface and contract
+
+```
+<<interface>> ApprovalPolicy
+
+  requires_approval(companion)            : bool
+  deadline_for(reservation, now)          : datetime
+  is_live(reservation, now)               : bool        # in memory, one reservation
+  live_q(now)                             : Q           # in SQL, a set of reservations
+  overdue_q(now)                          : Q           # in SQL, the complement over PENDING_APPROVAL
+```
+
+**Contract**
+
+```
+deadline_for(reservation, now)
+  Preconditions:
+  - reservation.start_at > now   (guaranteed by OP-03 before this is reached)
+  Postconditions:
+  - now < result <= reservation.start_at
+  - the window never pushes the deadline past the start of the reservation
+  Failures: none - total over its preconditions
+
+is_live / live_q / overdue_q
+  Preconditions: none - total over every reservation
+  Postconditions:
+  - is_live(r, now) == (r in the set selected by live_q(now))          [AGREEMENT]
+  - for every PENDING_APPROVAL exactly one of live_q / overdue_q holds [TOTALITY]
+  - a PENDING_APPROVAL with no deadline counts as overdue, never as live
+  - no state is changed
+  Failures: none
+```
+
+The two postconditions named **AGREEMENT** and **TOTALITY** are the point of this design. They exist
+because the rule has to be asked in two languages — Python and SQL — and nothing in the type system
+makes those two agree.
+
+**They do not both hold in the code as it stands.** `live_pending_q` is
+`approval_deadline__gt=now` and `overdue_queryset` is `approval_deadline__lte=now`; in SQL a `NULL`
+deadline satisfies neither, so a `PENDING_APPROVAL` without a deadline is simultaneously not live and
+not overdue. The in-memory check does not exist at all — `lifecycle._decide` compares
+`reservation.approval_deadline <= now` directly and raises `TypeError` on `None`. Making the rule total
+is a design decision of this DD, not a description of what is there.
+
+### Focused structural view
+
+```mermaid
+classDiagram
+  class ApprovalPolicy {
+    <<interface>>
+    +requires_approval(companion) bool
+    +deadline_for(reservation, now) datetime
+    +is_live(reservation, now) bool
+    +live_q(now) Q
+    +overdue_q(now) Q
+  }
+  class FixedWindowApprovalPolicy {
+    -window: timedelta
+    +requires_approval(companion) bool
+    +deadline_for(reservation, now) datetime
+    +is_live(reservation, now) bool
+    +live_q(now) Q
+    +overdue_q(now) Q
+  }
+  class approval {
+    <<module>>
+    +DEFAULT_WINDOW
+    +get_policy() ApprovalPolicy
+    +set_policy(policy) ApprovalPolicy
+    +effective_status(reservation, now, policy) str
+  }
+  class lifecycle {
+    <<module — owns Reservation.status>>
+    +confirm(reservation, actor, now)
+    +approve(reservation, actor, now)
+    +reject(reservation, actor, now)
+    +cancel(reservation, actor, now)
+    +reconcile_overdue_approvals(now, policy) int
+  }
+  class availability {
+    <<module>>
+    +blocking_reservations(companion, start_at, end_at, exclude_id, now)
+  }
+  class Reservation {
+    <<entity>>
+    +status
+    +start_at
+    +approval_deadline
+    +decided_by
+  }
+
+  ApprovalPolicy <|.. FixedWindowApprovalPolicy
+  approval ..> ApprovalPolicy : resolves the default
+  lifecycle ..> ApprovalPolicy : deadline_for, is_live, overdue_q
+  lifecycle ..> approval : effective_status
+  availability ..> ApprovalPolicy : live_q
+  approval ..> Reservation : reads
+  lifecycle --> Reservation : the only writer of status
+```
+
+`availability` and `lifecycle` both reach the rule through the same interface, which is what makes
+AGREEMENT enforceable rather than hoped for.
+
+## DD-4 — Methods, algorithms and dynamic behaviour
+
+### Algorithm — the deadline
+
+```
+deadline_for(reservation, now):
+    return min(now + policy.window, reservation.start_at)
+```
+
+Two branches, both reachable and both meaningful: the window applies when the reservation starts far
+enough away, and it is clamped to `start_at` when the reservation starts sooner than the window — a
+companion must never be asked to approve a booking that has already begun.
+
+### Decision table — effective status
+
+| Stored `status` | `approval_deadline` | Effective status | Blocks the companion (BR-02) |
+|---|---|---|---|
+| `PENDING_APPROVAL` | `> now` | `PENDING_APPROVAL` | yes |
+| `PENDING_APPROVAL` | `<= now` | `EXPIRED` | no |
+| `PENDING_APPROVAL` | `NULL` | `EXPIRED` | no |
+| anything else | any | as stored | per BR-02 |
+
+The third row is the new one. It makes the rule total, and it turns the `TypeError` that
+`lifecycle._decide` would raise today into a defined outcome.
+
+### Significant operations
+
+```
+Operation:        ApprovalPolicy.deadline_for(reservation, now)
+Responsibility:   AR-2 — turn the window policy into a concrete instant
+Input:            a reservation with start_at in the future; the current instant (BR-05)
+Output:           datetime, the moment the approval window closes
+Preconditions:    reservation.start_at > now
+Postconditions:   now < result <= reservation.start_at; nothing is written
+Side effects:     none
+Failure behavior: none — total over its preconditions
+```
+
+```
+Operation:        approval.effective_status(reservation, now, policy)
+Responsibility:   AR-4 — report what the state means now, not what was last written
+Input:            any reservation; the current instant; the policy
+Output:           a ReservationStatus value
+Preconditions:    none — total over every reservation and every status
+Postconditions:   equals the stored status unless the reservation is a PENDING_APPROVAL
+                  that is not live, in which case it is EXPIRED; nothing is written
+Side effects:     none — safe to call from read paths
+Failure behavior: none
+```
+
+```
+Operation:        lifecycle.reconcile_overdue_approvals(now, policy)
+Responsibility:   AR-5 — make the stored status catch up with the effective status
+Input:            the current instant; the policy
+Output:           int, how many rows were materialised
+Preconditions:    none
+Postconditions:   every reservation selected by policy.overdue_q(now) is stored as EXPIRED;
+                  **no reservation's effective status changes**, and no availability answer
+                  changes — reconciliation is observationally invisible;
+                  calling it twice in a row returns 0 the second time (idempotent)
+Side effects:     writes Reservation.status (permitted: this is the lifecycle element, ADR-01)
+Failure behavior: none; a reservation decided concurrently simply falls out of the queryset
+```
+
+```
+Operation:        lifecycle.cancel(reservation, actor, now)   [changed by this DD]
+Responsibility:   refuse a cancellation whose target is terminal
+Preconditions:    the actor is the customer or the booked companion
+Postconditions:   a reservation whose EFFECTIVE status is EXPIRED is refused and materialised,
+                  instead of being silently cancelled
+Failure behavior: CONFLICT / "EXPIRED"
+```
+
+The last one is a **behaviour change this DD discovered**: BR-03 says `EXPIRED` is terminal and cannot
+be cancelled, but the implementation checks only the *stored* status, so an overdue pending request can
+still be cancelled today. Specification and code disagree, and the specification is right.
+
+### Detailed sequence inside the unit
+
+C03 architecture level: `API → Reservation Lifecycle → Approval Policy → Persistence`
+
+C05 DD level:
+
+```mermaid
+sequenceDiagram
+  participant L as lifecycle.approve
+  participant P as ApprovalPolicy
+  participant A as approval.effective_status
+  participant R as Reservation
+  participant AV as availability
+
+  L->>R: reload inside the transaction
+  L->>L: actor is the booked companion? (BR-04)
+  L->>A: effective_status(reservation, now, policy)
+  A->>P: is_live(reservation, now)
+  P-->>A: false — the deadline has passed (or is NULL)
+  A-->>L: EXPIRED
+
+  alt the request is no longer live
+    L->>R: store status = EXPIRED (reconcile one row)
+    L-->>L: raise TransitionRefused(CONFLICT, "EXPIRED")
+  else the request is live
+    L->>AV: still no overlap? (BR-02, re-checked)
+    AV->>P: live_q(now)
+    P-->>AV: the predicate for blocking pending rows
+    AV-->>L: free
+    L->>R: store status = CONFIRMED, decided_by = actor
+  end
+```
+
+Both branches reach the live/overdue rule through `ApprovalPolicy` — the approve path in memory, the
+availability path in SQL. That is AGREEMENT in action.
+
+## DD-5 — Unit and component tests derived from the design
+
+| # | DD element / decision | What must hold? | Test level | Test case |
+|---|---|---|---|---|
+| **T-1** | `deadline_for` contract | `now < deadline <= start_at` always | unit | window applies when the start is 7 days away; deadline is clamped to `start_at` when the start is 3 h away |
+| **T-2** | deadline algorithm, both branches | the two branches are selected by the relation between the window and the start | unit | start in 30 h → `now + 24 h`; start in 3 h → exactly `start_at` |
+| **T-3** | **AGREEMENT** postcondition | `is_live(r, now)` equals membership of `r` in `live_q(now)`, for every reservation | component | a fixture set covering live, overdue, `NULL`-deadline and non-pending rows; the in-memory answer and the SQL answer must match row for row |
+| **T-4** | **TOTALITY** postcondition | every `PENDING_APPROVAL` is in exactly one of `live_q` / `overdue_q` | component | the same fixture set; the two querysets partition the pending rows |
+| **T-5** | state transition + reconciliation postcondition | reconciliation materialises `EXPIRED` for overdue rows only, and is idempotent | component | one live and one overdue pending; the first call returns 1 and expires only the overdue one, the second returns 0 |
+| **T-6** | reconciliation is observationally invisible (DR-2) | availability gives the same answer before and after reconciliation | component | an overdue pending over an interval; `available` is `true` both before and after the sweep |
+| **T-7** | failure behaviour, `NULL` deadline | a pending request with no deadline is a defined outcome, not a crash | unit | `effective_status` returns `EXPIRED`; approving it refuses with `EXPIRED` instead of raising `TypeError` |
+| **T-8** | changed contract of `cancel` | an effectively expired reservation cannot be cancelled (BR-03) | component | an overdue pending, cancelled before its start → refused with `EXPIRED`, stored as `EXPIRED` |
+| **T-9** | variation point AR-6 | injecting a different window changes the deadline and nothing else | unit | a 2 h policy produces `now + 2 h`; the lifecycle code is untouched |
+
+Two of them explained, as the assignment asks:
+
+```
+Test:            T-3 (AGREEMENT between is_live and live_q)
+Selected level:  component — it needs a real database, because half of the rule is SQL
+Why this level:  a pure unit test could only check the Python branch. The entire risk
+                 lives in the gap between the two representations, so a test that does
+                 not execute the SQL cannot see the defect it is meant to catch.
+Verifies:        the DD-3 decision to let one interface own the rule in both languages
+                 instead of writing the condition twice.
+
+Test:            T-6 (reconciliation is observationally invisible)
+Selected level:  component — it compares the result of an availability query across a
+                 state-changing operation
+Why this level:  the property is about the relationship between two modules (the sweep
+                 and availability), not about either one in isolation.
+Verifies:        the DD-2/AR-5 decision that EXPIRED is a projection being caught up with,
+                 never a decision. If someone later makes the sweeper the authority for
+                 expiry, this test fails — which is the point. It is the resolution of
+                 driver DR-2 expressed as an executable property.
+```
+
+## DD — decisions intentionally left to code
+
+- the SQL that Django's ORM emits for `live_q` / `overdue_q`;
+- the `select_related` used when the lifecycle owner reloads a reservation;
+- the exact wording of refusal messages;
+- the module-level default-policy holder — the same two-function shape already used by
+  `notifications.get_port` / `set_port`, chosen for consistency rather than designed anew;
+- logging.
+
+## DD-6 — Design ↔ implementation
+
+Implemented on 2026-10-15. The design above was written first; this table reports what the code then
+did with it.
+
+| DD decision | Implemented? | Evidence | Action |
+|---|---|---|---|
+| `ApprovalPolicy` as an interface with all five operations | **YES** | `approval.py` — an `ABC` with `requires_approval`, `deadline_for`, `is_live`, `live_q`, `overdue_q` | keep |
+| `FixedWindowApprovalPolicy(window)` as the default implementation | **YES** | `approval.py`; `DEFAULT_WINDOW = 24 h` | keep |
+| AR-6 variation point: injectable policy with a production default | **YES** | `get_policy()` / `set_policy()`, plus a `policy=` parameter on `confirm`, `cancel`, `approve`, `reject`, `reconcile_overdue_approvals`, `blocking_reservations`, `is_available` | keep |
+| AR-1: the lifecycle owner asks the policy instead of reading the column | **YES** | `lifecycle.confirm` now calls `policy.requires_approval(...)` | keep |
+| AGREEMENT: one rule, two representations, one owner | **YES** | `availability` uses `policy.live_q`, the decision path uses `policy.is_live` through `effective_status`; T-3 | keep |
+| TOTALITY: live ∪ overdue covers every pending row, disjointly | **YES** | `live_q` requires a non-null deadline, `overdue_q` accepts null *or* past; T-4 | keep |
+| AR-4 `effective_status` as a pure projection | **YES** | `approval.effective_status()`; no writes, used from both the decide and the cancel path | keep |
+| AR-5 reconciliation owned by the lifecycle element | **YES** | `lifecycle.reconcile_overdue_approvals()`; the policy supplies the predicate, the lifecycle element performs the write, so ADR-01 still holds | keep |
+| Reconciliation is observationally invisible and idempotent | **YES** | T-5 (second call returns 0), T-6 (availability unchanged across the sweep) | keep |
+| A `NULL` deadline is a defined outcome, not a crash | **YES** | before: `TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.datetime'`; after: refused with `EXPIRED` and materialised; T-7, T-7b | keep |
+| `cancel` refuses an effectively expired reservation (BR-03) | **YES** | before: it was accepted and stored as `CANCELLED`; after: `CONFLICT / EXPIRED`; T-8 | keep |
+| Operation renamed `expire_overdue_approvals` → `reconcile_overdue_approvals` | **YES** | `lifecycle.py`; the management command keeps its user-facing name `expire_pending_approvals` | keep |
+| `ApprovalPolicy` owns the authority rule (BR-04) | **NO — rejected during design** | BR-04 is a transition rule, and ADR-01 gives every transition to the lifecycle element | design kept as written: the policy answers *may this still be decided*, never *who may decide it* |
+
+### Two mismatches found, and which side won
+
+Both were found by writing the contract first and only then looking at the code. In both cases the
+**design won and the code changed**, because the specification already said what should happen:
+
+1. **A pending request with no `approval_deadline` crashed the decision path.** The old code compared
+   `reservation.approval_deadline <= now` directly. Measured before the change:
+   `TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.datetime'`. The SQL
+   predicates disagreed with each other in the same situation — `approval_deadline__gt=now` and
+   `approval_deadline__lte=now` both exclude `NULL`, so such a row was neither live nor overdue. The
+   TOTALITY postcondition was written to forbid exactly this, and it fails when run against the old
+   predicates.
+2. **An effectively expired reservation could be cancelled.** `BR-03` says `EXPIRED` is terminal, but
+   `cancel` only looked at the *stored* status. Measured before the change: cancelling a
+   `PENDING_APPROVAL` whose deadline had passed an hour earlier was accepted and stored as `CANCELLED`.
+   The reservation is now materialised as `EXPIRED` and the cancellation is refused.
+
+Neither was reachable through the HTTP API in a normal run — `confirm` always sets a deadline, and the
+overdue-cancel window is narrow — which is why 61 passing tests had not caught either. They were found
+by writing down the contract.
