@@ -156,3 +156,90 @@ Create (REQ-01), the cancellation boundary (REQ-05), idempotency (REQ-06), BR-01
 
 ## Commit / tag
 Baseline v0.2 was merged to `main` in PR #3, merge commit `e0f3ced`. The corrections from the team review (the OP-06 examples, the two activity diagrams, this evidence) follow in the review commit on top of it. The state of the application for CP1 is marked by the annotated tag **`v0.2`** — `git tag -l v0.2` on `main` must list it; if it does not, the tag was never pushed and this line is the place to notice it.
+
+---
+
+# C03 — Architecture Evidence
+
+**Baseline:** v0.2 (tag `v0.2`, commit `f764c83`) — unchanged by C03. No requirement, rule or diagram of
+the specification was altered; C03 changed structure, not behaviour.
+
+**Part A:** the AS-IS mapping of OP-03 Confirm Reservation, in
+[architecture-and-decisions.md](architecture-and-decisions.md#c03-part-a--as-is-mapping-of-one-scenario).
+Its central findings — the BR-02 probe and the `UPDATE` as two unlocked statements, three views reacting
+to one rule, and no code at all behind the Notification Service — are the evidence behind drivers DR-1,
+DR-4 and DR-3.
+
+**Drivers:** five, in section B. DR-1 BR-02 under concurrency · DR-2 approval state outliving its
+request · DR-3 the notification boundary · DR-4 one owner per lifecycle transition · DR-5 the actor's
+identity. The raw C02 list earlier in the same file is marked as superseded by B, so the document has
+one driver list, not two.
+
+**Decision question:** where must the authoritative confirmation decision be made and owned, and what
+enforces BR-02 when two confirmations race?
+
+**Alternatives:** **A** — an application-layer lifecycle element owns `Reservation.status` and checks
+BR-02 inside the writing transaction. **B** — PostgreSQL enforces BR-02 with an `ExclusionConstraint`
+over the companion and the time range, and the application translates the `IntegrityError`.
+
+**Scenario walkthrough:** both alternatives were walked through Confirm Reservation for a companion
+requiring approval, with a concurrent conflicting confirmation and a later approval (section E3). They
+differ in exactly one row — the concurrent confirmation — and the comparison in E2 showed that B buys
+that row only for the `CONFIRMED` half of BR-02, because a constraint condition must be immutable and
+the pending half depends on `now()`.
+
+**ADR:** ADR-01 chooses **Alternative A** and keeps SQLite. Accepted negative consequences, recorded
+rather than hidden: REQ-04 stays unguaranteed under true concurrency; nothing outside the application
+protects BR-02; persistence is not substitutable; one more indirection per operation. Four explicit
+reconsider-when triggers, the first being more than one concurrent user. ADR-01 supersedes the Postgres
+remark in D3.
+
+**Views:** domain class model (C1) · system context (G1) · TO-BE static architecture (G2) · state
+ownership of all nine v0.2 transitions (G3) · runtime/deployment, two processes over one SQLite file
+(G4) · design sequence for Confirm with an `alt` branch (H1) · focused design class diagram (H2). All
+eight Mermaid diagrams were rendered with `mmdc` to confirm they parse.
+
+**Cross-view issues found and resolved** (section I, performed on the design before any code changed):
+1. `[initial] → DRAFT` had no deciding element. Creation assigns no status — the field default does.
+   G3 now states this and scopes the ownership claim to transitions *between* states, which is also why
+   `ReservationCreateSerializer` does not break the L2 rule.
+2. The file already carried a driver list from C02. Two lists in one document is the defect this
+   project hit in C01 with two future pressures, so the old one is explicitly marked superseded.
+3. Re-checking H2 against the written code found that `post()` lives once on a shared `TransitionView`
+   base, not on each view class. **The diagram was corrected to match the code**, not the reverse.
+
+**AS-IS → TO-BE delta:** seven `CHANGE` rows, four `KEEP`, three `VERIFY` (section J).
+
+**Implementation changes:** four new modules — `lifecycle.py` (owns every `Reservation.status` write),
+`availability.py` (owns the BR-02 definition, moved out of `models.py`), `approval.py` (owns the 24 h
+window and the deadline), `notifications.py` (port + logging implementation, dispatched via
+`transaction.on_commit`). `views.py` became four one-line subclasses of a shared `TransitionView`
+adapter; `expire_pending_approvals` delegates to the lifecycle owner. **No model field changed and no
+migration was generated.**
+
+**Behaviour verification:** `pytest` → **60 passed** (the 52 C02 behaviour tests unchanged, plus 5
+architecture-rule tests and 3 notification tests). `manage.py check` → no issues.
+`makemigrations --check --dry-run` → `No changes detected`. `scripts/demo_c02.sh` ran end to end against
+a live server with byte-identical responses to the pre-refactor run. Full table in L1.
+
+**Architecture conformance rule + result:** *only `lifecycle.py` may write `Reservation.status`, and no
+domain module may import the web framework.* Checked by `scripts/check_architecture.py` (AST scan, also
+runnable as `pytest src/reservations/tests/test_architecture.py`) → **passes**. Run against the
+pre-refactor commit it reports exactly the five status writes Part A identified, so the check is proven
+to detect the violation it is meant to prevent.
+
+**Remaining uncertainty / risk:**
+- **REQ-04 under real parallelism** is still unverified and, by ADR-01, unguaranteed. The first
+  reconsider-when trigger is a second concurrent user.
+- **BR-02 is not protected outside the application** — admin, shell or a second process can violate it.
+- **Expiry still has no scheduler** (D9, DR-2): `EXPIRED` is materialised by a command somebody runs.
+  Availability stays correct meanwhile because the deadline is data, but the two can disagree about the
+  stored status.
+- **The Notification Service is still a stub.** The boundary, the port and the after-commit ordering now
+  exist and are tested; no real transport, retry policy or dead-letter handling does.
+- **Authentication is still `actor_user_id` in the body** (D7, DR-5). It is now applied in one element
+  per operation instead of four views, so replacing it is a contained change — but it is not done.
+
+**Commit / tag:** branch `c03-architecture`, on top of `v0.2` (`f764c83`). The behaviour of baseline
+v0.2 is unchanged, so no new baseline tag is created; the C03 structure is identified by the merge
+commit of this branch.

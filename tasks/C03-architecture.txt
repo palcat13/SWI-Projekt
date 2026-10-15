@@ -1,0 +1,461 @@
+SWI · Cvičení C03 — Architecture
+Od AS-IS implementace k přijaté architektuře
+
+(Navazuje na C03 Část A, viz tasks/C03.txt — ta slouží jako hotový AS-IS podklad.)
+
+Cíl
+
+Navrhnout a zdůvodnit architekturu pro vybranou část systému, propojit ji s požadavky a scénáři
+z C02 a ověřit, že ji implementace skutečně dodržuje.
+
+V tomto průchodu se naučíte
+
+  - odvodit architektonicky významné problémy a drivery z požadavků a evidence;
+  - rozlišit doménové pojmy, odpovědnosti a jejich implementační umístění;
+  - určit, které odpovědnosti a stav musí mít jasného vlastníka;
+  - formulovat konkrétní architektonickou rozhodovací otázku;
+  - vytvořit a porovnat více reálných architektonických alternativ;
+  - ověřit alternativy na stejném scénáři, včetně failure / concurrency situace;
+  - zaznamenat rozhodnutí a jeho důsledky pomocí ADR;
+  - vytvořit konzistentní strukturální, dynamické a runtime pohledy na architekturu;
+  - realizovat scénář pomocí sekvenčního a návrhového třídního diagramu;
+  - kontrolovat konzistenci mezi požadavky, diagramy, rozhodnutími a kódem;
+  - porovnat AS-IS implementaci s přijatou TO-BE architekturou;
+  - řízeně upravit implementaci pouze tam, kde je to potřeba;
+  - ověřit nejen funkční chování, ale i dodržení konkrétního architektonického pravidla.
+
+Použijte:
+  - Specification Baseline v0.2;
+  - scénáře, pravidla/invarianty a statechart z C02;
+  - ověřovací příklady z C02;
+  - běžící aplikaci;
+  - drivery přenesené z C02;
+  - Část A — zmapování současné implementace.
+
+Pokud jste Část A udělali v úterý, použijte ji jako hotový AS-IS podklad. Aktualizujte pouze
+položky, které jste od té doby skutečně změnili v kódu.
+
+Postup C03
+
+  AS-IS evidence
+      ↓
+  drivers
+      ↓
+  domain + responsibilities
+      ↓
+  decision question
+      ↓
+  alternatives
+      ↓
+  evaluate alternatives with drivers + scenario
+      ↓
+  ADR
+      ↓
+  TO-BE architecture
+      ↓
+  scenario realization
+      ↓
+  AS-IS → TO-BE delta
+      ↓
+  implementation
+      ↓
+  behaviour + architecture verification
+
+--------------------------------------------------------------------------------
+B. Zpřesněte 3–5 architektonických driverů
+
+Začněte drivery z C02. Přidejte další pouze tehdy, pokud vyplývají z požadavků, omezení nebo
+z nálezů v Části A.
+
+Pro každý driver vyplňte:
+
+  | Podklad / zdroj        | Proč ovlivňuje architekturu                  | Otázka, kterou musí architektura vyřešit |
+  | `BR-02`, `REQ-04`, Part A | dva souběžné requesty mohou oba vidět „bez konfliktu" | kde se musí udělat autoritativní confirmation decision, aby `BR-02` zůstalo pravdivé? |
+  | approval může přijít později | stav musí přežít konec původního requestu | kdo vlastní pending approval state a kdo provede pozdější transition? |
+  | `Notification Service` může selhat | business změna může být uložená dříve než notifikace | má failure notifikace změnit výsledek confirmation a kdo řeší retry? |
+
+Driver není řešení. `transaction`, `event bus`, `microservice`, `repository pattern` apod. jsou
+možné mechanismy/řešení.
+
+--------------------------------------------------------------------------------
+C1. Upravte doménový třídní model
+
+Pokud už doménový model máte, použijte jej a upravte pouze relevantní část.
+Model má obsahovat typicky 4–10 doménových pojmů relevantních pro zvolený scénář a drivery.
+
+Ukažte:
+  - pojmy, např. `Reservation`, `Resource`, `User`, `Approval`, `TimeInterval`;
+  - vztahy;
+  - násobnosti, pokud mají business význam;
+  - významné omezení/invariant, pokud patří k vztahu.
+
+Do doménového modelu nedávejte `Controller`, `Repository`, HTTP klienty ani frameworkové třídy.
+
+--------------------------------------------------------------------------------
+C2. Určete odpovědnosti systému
+
+Použijte stejný scénář z C02, jeho pravidla a drivery z B.
+Zapište všechny významné odpovědnosti pro tento slice; typicky jich bude 5–8.
+
+  | Zdroj | Odpovědnost | Co musí rozhodovat / vlastnit | Potřebuje jednoho jasného vlastníka? | Důvod |
+  | Confirm + statechart | rozhodnout, zda je confirmation povolená | lifecycle transition | ano | různé části nesmí rozhodnout odlišně |
+  | `BR-02` | vyhodnotit konflikt a zachovat invariant | confirmation decision při konfliktu | ano | souběh nesmí porušit invariant |
+  | approval change | spravovat pending approval | approve/reject/expire state | ano | stav přežívá request |
+  | notification | doručit notification | delivery/retry | podle návrhu | externí failure nesmí být nejasný |
+
+Potom u každé odpovědnosti doplňte:
+  - s čím musí být seskupena, protože sdílí stav/invariant;
+  - od čeho má být oddělena, protože má jiný důvod změny, failure/trust boundary nebo externí
+    technologii.
+
+V této části ještě neurčujte názvy komponent.
+
+--------------------------------------------------------------------------------
+D. Formulujte jednu hlavní rozhodovací otázku
+
+Vyberte jednu otázku, která:
+  - vychází z driveru;
+  - má dopad na strukturu/ownership/interakci/runtime;
+  - má alespoň dvě reálné varianty řešení.
+
+Příklady:
+  - Kde má být vlastněn delayed approval workflow?
+  - Kde má být provedeno confirmation decision tak, aby při souběhu platilo `BR-02`?
+  - Kde má být izolovaná integrace s `Notification Service` a co znamená její failure pro
+    `Confirm Reservation`?
+
+Zapište:
+
+  Rozhodovací otázka:
+
+--------------------------------------------------------------------------------
+E1. Navrhněte dvě materiálně odlišné alternativy
+
+Pro stejnou rozhodovací otázku vytvořte dvě malé strukturální varianty.
+Každá varianta má ukázat pouze prvky potřebné k vysvětlení rozdílu.
+
+Příklad otázky: Kde má být vlastněn approval workflow?
+
+  Alternativa A — stejný deployable
+
+  [Reservation Application]
+    ├─ [Reservation]
+    └─ [Approval Workflow]
+
+  Alternativa B — samostatný runtime prvek
+
+  [Reservation Application]
+            |
+            v
+  [Approval Worker / Service]
+
+--------------------------------------------------------------------------------
+E2. Porovnejte alternativy vůči driverům
+
+Vyberte 3–5 kritérií přímo z vašich driverů.
+
+  | Driver / kritérium  | Alternativa A        | Alternativa B        |
+  | konzistence         | konkrétní důsledek   | konkrétní důsledek   |
+  | failure behaviour   | ...                  | ...                  |
+  | změna / ownership   | ...                  | ...                  |
+  | provozní složitost  | ...                  | ...                  |
+
+Nedávejte body bez vysvětlení. Do buněk napište konkrétní technický důsledek.
+
+--------------------------------------------------------------------------------
+E3. Prožeňte obě alternativy jedním významným scénářem
+
+Použijte stejný scénář z C02 a jednu významnou komplikaci: failure, concurrency nebo delayed
+response. Nevytvářejte dva detailní sequence diagramy. Stačí tabulka:
+
+  | Krok / událost              | Alternativa A | Alternativa B |
+  | `Confirm Reservation` začne | ...           | ...           |
+  | je potřeba approval         | ...           | ...           |
+  | proces/request skončí       | ...           | ...           |
+  | approval přijde později     | ...           | ...           |
+  | relevantní failure/concurrency | ...        | ...           |
+
+Cíl: ověřit, že obě varianty skutečně umí realizovat požadované chování a odhalit rozdílné
+důsledky.
+
+--------------------------------------------------------------------------------
+F. Zapište ADR
+
+Po porovnání a scenario walkthrough zapište:
+
+  ## ADR-xx — <rozhodovací otázka>
+
+  Kontext:
+  Drivery:
+  Alternativa A:
+  Alternativa B:
+  Rozhodnutí:
+  Důvod:
+  Přijaté negativní důsledky:
+  Rozhodnutí znovu otevřeme, když:
+
+--------------------------------------------------------------------------------
+G1. Nakreslete kontext systému
+
+Nakreslete jeden context diagram.
+
+Postup:
+  1. `Reservation System` = jeden blok.
+  2. Kolem něj pouze skuteční externí aktéři/systémy relevantní pro projekt.
+  3. Každou vazbu popište informací/commandem, který přes hranici prochází.
+  4. Interní komponenty sem nedávejte.
+
+Příklad:
+
+  [User / Approver]
+        | reservation commands / approval
+        v
+  +----------------------+
+  |  Reservation System  |
+  +----------------------+
+       | identity claims
+       +----------------------> [IdP]
+
+       | notification request
+       +----------------------> [Notification Service]
+
+--------------------------------------------------------------------------------
+G2. Nakreslete TO-BE statickou architekturu
+
+Použijte UML Component Diagram, blokové schéma nebo jinou rovnocennou strukturální notaci.
+
+Postup
+  1. Vezměte odpovědnosti z C2.
+  2. Seskupte je do 3–8 logických architektonických prvků.
+  3. Každý prvek musí mít:
+       - název;
+       - hlavní odpovědnost;
+       - `owns: ...`, pokud vlastní významný stav/invariant.
+  4. Přidělte každou významnou odpovědnost právě jednomu hlavnímu ownerovi.
+  5. Nakreslete pouze povolené/požadované závislosti.
+  6. Každou důležitou šipku popište interakcí nebo rozhraním.
+  7. Externí systémy umístěte mimo `Reservation System`.
+  8. Rozhodnutí z ADR musí být v diagramu viditelné.
+
+Příklad formy:
+
+  +------------------------- Reservation System ------------------------+
+  |                                                                      |
+  | [Reservation Management]                                             |
+  | role: lifecycle + confirmation                                       |
+  | owns: Reservation lifecycle                                          |
+  |       | check availability                                           |
+  |       v                                                              |
+  | [Availability]                                                       |
+  |                                                                      |
+  | [Approval Workflow]                                                  |
+  | role: approval process                                               |
+  | owns: approval state                                                 |
+  |                                                                      |
+  | [Notification Integration]                                           |
+  +-----------------------|----------------------------------------------+
+                          | send notification
+                          v
+                 [Notification Service]
+
+--------------------------------------------------------------------------------
+G3. Doplňte ownership přechodů ve statechartu z C02
+
+Použijte existující statechart. Pro relevantní přechody doplňte:
+
+  | Přechod                        | Owner rozhodnutí | Kdo může transition pouze vyžádat |
+  | `DRAFT → PENDING_APPROVAL`     | ...              | ...                               |
+  | `PENDING_APPROVAL → CONFIRMED` | ...              | ...                               |
+  | `PENDING_APPROVAL → REJECTED`  | ...              | ...                               |
+
+Owner musí odpovídat prvku z G2.
+
+--------------------------------------------------------------------------------
+G4. Nakreslete runtime/deployment mapping
+
+Ukažte:
+  - skutečné procesy/deployables;
+  - databázi;
+  - externí runtime systémy;
+  - mapování logických prvků z G2 do procesů/deployables.
+
+Pokud máte jednu aplikaci, ukažte jednu aplikaci.
+
+Příklad:
+
+  [Reservation Application process]
+  contains:
+  - Reservation Management
+  - Approval Workflow
+  - Notification Integration
+
+          | read/write
+          v
+     [PostgreSQL]
+
+          +--------------------> [External IdP]
+          +--------------------> [Notification Service]
+
+--------------------------------------------------------------------------------
+H1. Nakreslete návrhový sekvenční diagram
+
+Použijte stejný scénář z C02 a Části A.
+Diagram má ukázat, jak scénář realizuje přijatá TO-BE architektura.
+
+Lifelines
+  - actor;
+  - relevantní prvky z G2;
+  - konkrétní doménový objekt/interface pouze tehdy, pokud je potřeba pro vysvětlení rozhodnutí.
+
+Messages — zobrazte pouze interakce, které:
+  - realizují významné kroky scénáře;
+  - rozhodují business pravidlo;
+  - mění stav;
+  - překračují důležitou boundary;
+  - souvisejí s driverem/ADR.
+
+Přidejte jednu důležitou `alt` větev, např. conflict/failure/reject.
+
+Účastník ani závislost se nesmí objevit pouze v sekvenci; musí odpovídat G2.
+
+--------------------------------------------------------------------------------
+H2. Nakreslete zaměřený návrhový třídní diagram
+
+Použijte UML Class Diagram pro stejný scénář. Typicky použijte 4–10 tříd/rozhraní.
+
+Zobrazte pouze:
+  - doménové entity/value objects potřebné pro scénář;
+  - policy/rule objekty;
+  - application/service objekt, pokud je v návrhu;
+  - významná rozhraní;
+  - repository interface, pokud je v návrhu;
+  - relevantní relationships/multiplicities;
+  - operace použité v H1 nebo nutné pro ownership responsibility.
+
+Každá významná lifeline/operace z H1 musí mít v H2 smysluplného vlastníka.
+
+--------------------------------------------------------------------------------
+I. Proveďte cross-view kontrolu
+
+  | Kontrola            | Otázka                                                      |
+  | C02 ↔ G2            | Umí architektura realizovat požadované chování a pravidla?  |
+  | C2 ↔ G2             | Má každá významná odpovědnost jednoho ownera?               |
+  | G2 ↔ H1             | Používá sekvence pouze existující/povolené závislosti?      |
+  | H1 ↔ H2             | Má každá významná zpráva/operace strukturálního vlastníka?  |
+  | statechart ↔ G3/H1  | Rozhoduje transition správný owner?                         |
+  | G2 ↔ G4             | Je každý logický prvek realisticky namapovaný do runtime?   |
+  | ADR ↔ G2/G4         | Je přijaté rozhodnutí skutečně vidět v architektuře?        |
+
+Rozpor opravte v příslušném artefaktu před změnou kódu.
+
+--------------------------------------------------------------------------------
+J. Sepište AS-IS → TO-BE delta
+
+Použijte Part A a přijaté diagramy G/H.
+
+  | Oblast                   | AS-IS                          | TO-BE                        | Akce     |
+  | změna `Reservation.state`| controller + service           | pouze owner lifecycle        | `CHANGE` |
+  | Notification API         | vendor SDK v application logic | izolováno v integration prvku| `CHANGE` |
+  | persistence dependency   | už odpovídá návrhu             | stejné                       | `KEEP`   |
+  | dependency rule          | neověřeno                      | pouze povolené směry         | `VERIFY` |
+
+Povolené akce:
+  - `CHANGE` — kód změnit;
+  - `KEEP` — současná implementace už odpovídá návrhu;
+  - `VERIFY` — implementace pravděpodobně odpovídá, ale potřebujete ověření.
+
+--------------------------------------------------------------------------------
+K. Upravte implementaci
+
+Proveďte řádky `CHANGE` z J. Potom:
+  1. aplikaci sestavte/spusťte;
+  2. spusťte relevantní ověřovací příklady z C02;
+  3. opravte chyby způsobené změnou;
+  4. zaznamenejte commit/tag.
+
+Pokud J neobsahuje žádné `CHANGE`, kód nepřepisujte pouze kvůli cvičení.
+
+--------------------------------------------------------------------------------
+L1. Ověřte chování
+
+Znovu spusťte relevantní verification examples z C02 pro zvolený scénář a změněné části.
+
+  | Ověření                            | Výsledek | Doklad |
+  | success path                       | ...      | ...    |
+  | vybraná alternative/failure        | ...      | ...    |
+  | relevantní boundary/concurrency test | ...    | ...    |
+
+--------------------------------------------------------------------------------
+L2. Ověřte jedno architektonické pravidlo
+
+Vyberte pravidlo, které přímo plyne z ADR/G2.
+
+Příklad:
+  Pouze Reservation Management smí měnit Reservation lifecycle state.
+nebo:
+  Vendor Notification SDK smí být použit pouze v Notification Integration.
+
+Vytvořte jednu opakovatelnou kontrolu:
+  - architecture/dependency test;
+  - static-analysis rule;
+  - script/repository check;
+  - jinou reprodukovatelnou kontrolu.
+
+Zapište:
+
+  Architektonické pravidlo:
+  Kontrola:
+  Výsledek:
+
+--------------------------------------------------------------------------------
+M. Evidence
+
+Do docs/evidence-and-evolution.md přidejte:
+
+  ## C03 — Architecture Evidence
+
+  Baseline: v0.2
+  Part A:
+
+  Drivers:
+  Decision question:
+  Alternatives:
+  Scenario walkthrough:
+  ADR:
+
+  Views:
+  - domain class
+  - context
+  - static architecture
+  - state ownership
+  - runtime/deployment
+  - design sequence
+  - focused design class
+
+  Cross-view issues found/resolved:
+  AS-IS → TO-BE delta:
+  Implementation changes:
+
+  Behaviour verification:
+  Architecture conformance rule + result:
+
+  Remaining uncertainty / risk:
+  Commit/tag:
+
+--------------------------------------------------------------------------------
+Hotovo je, když
+
+  ☐ 3–5 driverů je podložených požadavky/evidencí;
+  ☐ relevantní doménový model je konzistentní s C02;
+  ☐ významné odpovědnosti jsou explicitní a mají jasné ownership požadavky;
+  ☐ jedna hlavní decision question má dvě materiálně odlišné alternativy;
+  ☐ alternativy jsou porovnané vůči driverům a procházejí stejným významným scénářem;
+  ☐ ADR zaznamenává rozhodnutí, negativní důsledky a `reconsider when`;
+  ☐ context, static architecture, state ownership a runtime mapping si neodporují;
+  ☐ jeden scénář je realizovaný návrhovým sequence diagramem;
+  ☐ design class diagram podporuje stejnou realizaci;
+  ☐ cross-view kontrola je provedena před změnou kódu;
+  ☐ AS-IS → TO-BE delta určuje `CHANGE / KEEP / VERIFY`;
+  ☐ relevantní C02 behaviour verification po změně prochází;
+  ☐ jedna opakovatelná kontrola chrání konkrétní architektonické pravidlo;
+  ☐ evidence a přesný commit/tag jsou zaznamenané.

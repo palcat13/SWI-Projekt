@@ -27,7 +27,14 @@ requirements.txt        Python dependencies
 pytest.ini              pytest config (settings module, src/ on path)
 src/manage.py           Django entry point
 src/config/             project settings and root URLs
-src/reservations/       domain app: models, serializer, API view, tests
+src/reservations/       domain app (structure from C03 / ADR-01):
+  models.py             entities and schema constraints
+  lifecycle.py          owns every Reservation.status transition
+  availability.py       the single definition of BR-02 (blocking reservations)
+  approval.py           the approval window and deadline policy
+  notifications.py      notification port, dispatched after commit
+  views.py, serializers.py, urls.py   HTTP adapter
+scripts/check_architecture.py   repeatable check of the ADR-01 architecture rule
 ```
 
 ## Build & run
@@ -48,6 +55,12 @@ Run the tests (from the repository root, venv active):
 
 ```bash
 pytest
+```
+
+Check that the code still obeys the architecture rule accepted in ADR-01:
+
+```bash
+python scripts/check_architecture.py
 ```
 
 Create demo data and a reservation:
