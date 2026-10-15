@@ -1,0 +1,224 @@
+SWI · Cvičení C03 — Část A: Zmapujte současnou realizaci jednoho scénáře
+Úterní předstih / první část společného C03
+
+Cíl
+
+Pochopit, jak současná implementace skutečně realizuje jeden scénář z C02, a připravit ověřený
+AS-IS podklad pro návrh architektury.
+
+V tomto průchodu se naučíte
+
+  - sledovat scénář od specifikace až do konkrétního kódu;
+  - rozlišit business krok od technických detailů implementace;
+  - identifikovat části systému, které scénář realizují;
+  - zjistit, kde je stav uložen a kde se rozhoduje o jeho změně;
+  - dohledat, kde se v implementaci vynucuje business pravidlo / invariant;
+  - identifikovat relevantní externí a perzistenční závislosti;
+  - vytvořit jednoduchý AS-IS strukturální pohled podle skutečného kódu;
+  - formulovat konkrétní architektonickou otázku založenou na evidenci.
+
+Vycházíte ze Specification Baseline v0.2 a běžící aplikace z C02.
+
+Použijte jeden scénář, který už máte ve v0.2. Doporučený je `Confirm Reservation`; pokud je pro váš
+tým architektonicky zajímavější schvalování, použijte příslušný scénář s approval.
+
+Výstup Části A
+
+Do docs/architecture-and-decisions.md vložte:
+
+  1. odkaz na použitý scénář a související požadavky/pravidla;
+  2. mapování hlavních kroků scénáře na konkrétní kód;
+  3. mapování jedné důležité alternativní/chybové větve;
+  4. seznam hlavních částí implementace, které scénář realizují;
+  5. kde je stav uložen, kdo rozhoduje o změně stavu a kde se vynucuje jedno důležité pravidlo;
+  6. relevantní externí/perzistenční závislosti;
+  7. jeden AS-IS strukturální diagram;
+  8. jednu konkrétní otázku pro další architektonický návrh.
+
+--------------------------------------------------------------------------------
+A1. Uveďte scénář, který sledujete
+
+Zapište pouze referenci:
+
+  | Položka            | Hodnota                        |
+  | Scénář / operace   | např. `Confirm Reservation`    |
+  | Požadavky          | např. `REQ-03`, `REQ-04`       |
+  | Pravidla / invarianty | např. `BR-02`               |
+  | Baseline           | `v0.2`                         |
+
+--------------------------------------------------------------------------------
+A2. Namapujte hlavní průchod scénáře na kód
+
+Vezměte hlavní úspěšný scénář z C02.
+Pro každý business významný krok najděte místo, kde jej implementace skutečně realizuje.
+
+  | Krok scénáře z C02              | Realizace v kódu                  | Doklad          |
+  | přijmout požadavek na potvrzení | `ReservationController.confirm()` | soubor + metoda |
+  | načíst `Reservation`            | ...                               | ...             |
+  | ověřit, že přechod je povolený  | ...                               | ...             |
+  | vyhodnotit konflikt             | ...                               | ...             |
+  | změnit stav                     | ...                               | ...             |
+  | uložit výsledek                 | ...                               | ...             |
+
+Do tabulky nedávejte gettery, frameworkové callbacky ani pomocné utility, pokud nemají význam pro
+chování scénáře.
+
+Doklad = konkrétní soubor/třída/metoda, test nebo ověřený runtime výstup.
+
+--------------------------------------------------------------------------------
+A3. Namapujte jednu důležitou alternativní nebo chybovou větev
+
+Vyberte jednu větev stejného scénáře, která je důležitá pro chování systému.
+Například: conflict exists → confirmation is rejected
+
+Vyplňte:
+
+  | Co říká v0.2        | Kde se podmínka zjistí | Kde se rozhodne výsledek | Co dostane volající |
+  | konflikt → odmítnout| ...                    | ...                      | ...                 |
+
+Pokud se implementace liší od v0.2, zapište rozdíl jako samostatný nález:
+
+  | Specifikace | Implementace | Doklad |
+  | ...         | ...          | ...    |
+
+--------------------------------------------------------------------------------
+A4. Vyberte hlavní části implementace
+
+Z kroků A2–A3 vyberte části kódu, které scénář skutečně realizují. Typicky půjde o 3–7 částí.
+
+Použijte pokud možno stejnou úroveň detailu:
+  - buď konkrétní třídy, pokud je aplikace malá;
+  - nebo logické skupiny/moduly, pokud scénář prochází větším počtem tříd.
+
+Pokud jeden blok sdružuje více tříd, uveďte pod ním, které třídy do něj patří.
+
+Vyplňte:
+
+  | Část implementace   | Typ / obsah                          | Role v tomto scénáři | Doklad |
+  | `Reservation API`   | `ReservationController`              | přijme command       | ...    |
+  | `Reservation logic` | `ReservationService`, `Reservation`  | rozhodne potvrzení   | ...    |
+  | `Persistence`       | `ReservationRepository`, ...         | načte/uloží stav     | ...    |
+
+--------------------------------------------------------------------------------
+A5. Určete stav, změnu stavu a jedno pravidlo
+
+Vyplňte tři samostatné položky.
+
+Stav
+
+  | Otázka                                                      | Odpověď | Doklad |
+  | Kde je stav `Reservation` trvale uložen?                    | ...     | ...    |
+  | Který kód rozhoduje/provádí přechod použitý ve scénáři?     | ...     | ...    |
+
+Business pravidlo / invariant
+
+Vyberte jedno pravidlo relevantní pro stejný scénář, např. `BR-02`.
+
+  | Otázka                                  | Odpověď | Doklad |
+  | Kde se zjistí podmínka pravidla?        | ...     | ...    |
+  | Kde se podle výsledku rozhodne?         | ...     | ...    |
+  | Kde se provede výsledná změna stavu?    | ...     | ...    |
+
+Pokud stejné rozhodnutí dělá více míst, uveďte všechna.
+
+--------------------------------------------------------------------------------
+A6. Zapište relevantní závislosti
+
+Zapište pouze závislosti, které jsou použité ve zvoleném scénáři nebo jsou nutné pro jeho
+stav/pravidla.
+
+  | Závislost              | Kde se napojuje na váš kód | Která část zná její technické API | Doklad |
+  | databáze               | ...                        | ...                               | ...    |
+  | `Notification Service` | ...                        | ...                               | ...    |
+  | IdP                    | ...                        | ...                               | ...    |
+
+Nevypisujte běžné knihovny frameworku.
+
+--------------------------------------------------------------------------------
+A7. Nakreslete AS-IS strukturální diagram
+
+Diagram má ukázat současnou realizaci zvoleného scénáře, ne cílový návrh.
+
+Postup
+  1. Nakreslete obdélník Application code.
+  2. Dovnitř vložte 3–7 bloků z A4.
+  3. Každý blok musí mít:
+       - název;
+       - krátkou roli v tomto scénáři;
+       - pokud jde o skupinu, uveďte pod diagramem konkrétní třídy/moduly, které obsahuje.
+  4. Databázi a externí systémy nakreslete mimo Application code.
+  5. Nakreslete pouze vazby, které jsou pro zvolený scénář skutečně použité.
+  6. Každou důležitou šipku popište slovesem/operací: confirm, load/save Reservation,
+     send notification, validate token, ...
+  7. Směr šipky musí odpovídat skutečnému směru volání nebo závislosti.
+  8. Nemíchejte bez vysvětlení jednu konkrétní třídu s celou vrstvou. Pokud používáte různé úrovně
+     detailu, označte typ bloku (class, module, external system, database).
+
+Příklad formy
+
+  +------------------------- Application code --------------------------+
+  |                                                                      |
+  |  [Reservation API]                                                   |
+  |  role: accepts confirm command                                       |
+  |          | confirm(id)                                               |
+  |          v                                                           |
+  |  [Reservation logic]                                                 |
+  |  role: decides confirmation                                          |
+  |       | load/save Reservation        | send notification             |
+  |       v                              v                               |
+  |  [Persistence]                 [Notification integration]            |
+  |                                                                      |
+  +----------------------------------------------------------------------+
+          | read/write                         | HTTP/API
+          v                                    v
+   [Reservation DB]                  [Notification Service]
+
+Pod diagramem můžete doplnit:
+
+  Reservation API:
+  - ReservationController
+
+  Reservation logic:
+  - ReservationService
+  - Reservation
+
+  Persistence:
+  - ReservationRepository
+  - SqlReservationRepository
+
+--------------------------------------------------------------------------------
+A8. Formulujte jednu otázku pro další C03
+
+Otázka musí vycházet z konkrétního nálezu v A2–A7.
+
+Použijte:
+
+  | Položka        | Obsah |
+  | Otázka         | ...   |
+  | Doklad         | ...   |
+  | Proč je důležitá | ... |
+
+Příklad:
+
+  | Položka          | Obsah                                                                        |
+  | Otázka           | Mohou dva souběžné confirm requesty oba projít kontrolou konfliktu?          |
+  | Doklad           | `findConflicts()` a `save()` jsou oddělené operace v `ReservationService.confirm()` |
+  | Proč je důležitá | `BR-02` musí platit i při souběžném potvrzování                              |
+
+--------------------------------------------------------------------------------
+A9. AI
+
+AI můžete použít pro navigaci v repozitáři, návrh trace nebo první verzi diagramu.
+Do výsledku ale zapisujte pouze tvrzení, která jste ověřili v kódu, testu nebo runtime.
+
+--------------------------------------------------------------------------------
+Hotovo je, když
+
+  ☐ hlavní kroky scénáře jsou namapované na konkrétní implementaci;
+  ☐ jedna důležitá alternative/failure větev je dohledaná;
+  ☐ případný rozdíl v0.2 ↔ implementace je zaznamenaný;
+  ☐ hlavní části realizující scénář jsou identifikované na srovnatelné úrovni detailu;
+  ☐ je jasné, kde je stav uložen, kde se mění a kde se vynucuje jedno pravidlo;
+  ☐ relevantní externí/perzistenční závislosti jsou dohledané;
+  ☐ AS-IS diagram odpovídá skutečnému kódu;
+  ☐ existuje jedna evidencí podložená otázka pro další C03.

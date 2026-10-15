@@ -97,3 +97,195 @@ Notification Service                 ← external boundary, NOT implemented yet
 3. **The notification boundary** — four operations want to notify, and a notification failure must not roll back the state change. It needs an interface, a stub and a failure policy.
 4. **Rules inside views** — the checks for BR-02, BR-03 and BR-04 and the actor rules are repeated across four views in `views.py`. Extracting a domain layer where one state transition = one function is the main refactoring for C03.
 5. **The actor's identity** — `actor_user_id` (D7) is a stand-in for authentication and affects every state-changing operation.
+
+---
+
+# C03 Part A — AS-IS mapping of one scenario
+
+This part records **how the code works today**, not how it should be structured. Every claim below was
+verified against the source, a test, or a captured runtime trace on 2026-10-15 (tag `v0.2`, commit
+`f764c83`, Python 3.10.12). Line numbers refer to that commit.
+
+## A1 — The scenario under study
+
+| Item | Value |
+|---|---|
+| Scenario / operation | **OP-03 Confirm Reservation** ([specification.md](specification.md)) |
+| Requirements | `REQ-03` (conditions for confirmation), `REQ-04` (at most one of two conflicting confirmations), `REQ-07` (a companion requiring approval ends in `PENDING_APPROVAL`) |
+| Rules / invariants | `BR-02` (exclusive companion), `BR-01` (half-open intervals), `BR-05` (server clock), `BR-06` (actor identification) |
+| Baseline | `v0.2` |
+
+Confirm was chosen over the approval scenario because it is the only operation that runs through the
+whole chain — HTTP routing, input validation, all the guard conditions, the `BR-02` query, the state
+change and the write — and because both of its branches (success and `409 OVERLAP`) are the ones
+`BR-02` depends on.
+
+## A2 — The main success path mapped to code
+
+Steps are the main success scenario of OP-03. Framework plumbing and getters are left out.
+
+| Scenario step (C02) | Implementation | Evidence |
+|---|---|---|
+| accept the confirmation request | `ReservationConfirmView.post()` | `src/reservations/views.py:77-78`; route `reservations/urls.py:14-18`, mounted by `config/urls.py:6` |
+| identify the actor (BR-06) | `actor_or_error()` → `ActorSerializer` | `views.py:79`, `views.py:39-42`, `serializers.py:46-47`; trace: the `auth_user` SELECT runs **before** `BEGIN` |
+| load the `Reservation` | `get_object_or_404(Reservation, pk=pk)` | `views.py:81`, inside the transaction opened at `views.py:80` |
+| verify the actor is the customer | `reservation.customer_id != actor.pk` → `403` | `views.py:82-85`; test `tests/test_confirm.py:58` |
+| verify the transition is allowed | `reservation.status != ReservationStatus.DRAFT` → `409` | `views.py:86-87`; test `tests/test_confirm.py:70` |
+| verify the companion is bookable | `reservation.companion.is_active` → `409` | `views.py:88-89`; test `tests/test_confirm.py:122` |
+| verify the interval has not started (BR-05) | `reservation.start_at <= now` → `409` | `views.py:91-93`; test `tests/test_confirm.py:134` |
+| evaluate the conflict (BR-02) | `blocking_reservations(...).exists()` | `views.py:94-101` calling `models.py:75-86`; test `tests/test_confirm.py:80` |
+| decide the target state (REQ-07) | `companion.requires_approval` → `PENDING_APPROVAL` + deadline, else `CONFIRMED` | `views.py:103-108`; tests `tests/test_confirm.py:31` and `:45` |
+| change the state | assignment to `reservation.status` | `views.py:104` / `views.py:108` |
+| persist the result | `reservation.save()` inside `transaction.atomic()` | `views.py:109`; trace: a single `UPDATE` between `BEGIN` and `COMMIT` |
+| return the outcome | `Response(reservation_state(reservation))` → `200` | `views.py:111`, `views.py:31-36` |
+
+**Captured runtime trace of the happy path** (`django.test.utils.CaptureQueriesContext`, `DRAFT → CONFIRMED`,
+`HTTP 200 {"id": "...", "status": "CONFIRMED", "approval_deadline": null}`) — seven statements, in this order:
+
+```
+SELECT ... FROM auth_user ...                 <- the actor, OUTSIDE the transaction
+BEGIN
+SELECT ... FROM reservations_reservation ...  <- load the reservation
+SELECT ... FROM reservations_companion ...    <- the companion, a lazy FK access
+SELECT 1 AS "a" FROM reservations_reservation <- the BR-02 probe (full text in A5)
+  WHERE companion_id = ... AND end_at > ... AND start_at < ...
+    AND (status = 'CONFIRMED' OR (approval_deadline > ... AND status = 'PENDING_APPROVAL'))
+    AND NOT (id = ...) LIMIT 1
+UPDATE reservations_reservation SET ... status = 'CONFIRMED' ... WHERE id = ...
+COMMIT
+```
+
+## A3 — One important failure path: conflict → rejection
+
+| What v0.2 says | Where the condition is detected | Where the outcome is decided | What the caller receives |
+|---|---|---|---|
+| overlap with a blocking reservation → reject, the reservation stays `DRAFT` (REQ-03, BR-02) | In the **database**: the `SELECT 1 … LIMIT 1` built by `blocking_reservations()` (`models.py:78-83`). The rule is a SQL `WHERE` clause, not Python branching. | `views.py:94-101` — the view calls `.exists()` and returns on a truthy result; `conflict()` at `views.py:23-24` builds the body | `409` with `{"error": "OVERLAP", "detail": "The companion is not available for this interval."}`; no `UPDATE` is issued, state stays `DRAFT` |
+
+**Captured runtime trace of the failure path:** identical statements up to the probe, then `COMMIT`
+with **no `UPDATE`** — `HTTP 409 {"error": "OVERLAP", ...}`, state after the call `DRAFT`. Test:
+`tests/test_confirm.py:80`.
+
+### Differences between v0.2 and the implementation
+
+| Specification | Implementation | Evidence |
+|---|---|---|
+| **REQ-04:** "For competing confirmations that would violate BR-02, at most one reservation shall reach `CONFIRMED`." Stated as a guarantee of the system. | Guaranteed **only for sequential calls**. The BR-02 probe and the `UPDATE` are two separate statements with no lock between them; `select_for_update` appears nowhere in the codebase and SQLite does not support it (D3). Two interleaved requests can both read "no conflict" and both write. | `grep -rn "select_for_update" src/` → no match; only `transaction.atomic()` at `views.py:80,117,154`. The trace shows a plain `SELECT 1 … LIMIT 1` with no `FOR UPDATE`. The only test is sequential (`tests/test_confirm.py:94`). The specification admits the verification gap in OP-03 *TBD*, but REQ-04 is still worded as a guarantee. |
+| **OP-03 failure outcomes** list exactly four rejections: `403` for a different actor, and `409` for the wrong state / an inactive companion / a started interval / an overlap. | A **fourth kind of rejection exists and is not specified**: a missing or unknown `actor_user_id` is rejected by `ActorSerializer` with `400`, before any of the OP-03 guards run. | Verified at runtime: missing field → `400 {"actor_user_id": ["This field is required."]}`; `actor_user_id = 999999` → `400 {"actor_user_id": ["Invalid pk \"999999\" - object does not exist."]}`; a known but wrong user → `403 FORBIDDEN_ACTOR`. State stays `DRAFT` in all three cases. |
+
+Neither difference is a code defect: the first is a known limit of D3, the second is an unspecified but
+reasonable behaviour. Both belong in the specification's failure list, which is a C03 follow-up.
+
+## A4 — The implementation elements that realize the scenario
+
+Four elements inside the application, at module/class level, plus the database outside it.
+
+| Element | Type / contents | Role in this scenario | Evidence |
+|---|---|---|---|
+| **HTTP routing** | module — `config/urls.py`, `reservations/urls.py` | Maps `POST /reservations/{uuid}/confirm` to the view; the `uuid` path converter rejects a malformed id with `404` before any code runs | `config/urls.py:6`, `reservations/urls.py:14-18` |
+| **Actor input validation** | class — `ActorSerializer` | Turns `actor_user_id` from the body into a `User`, or rejects the request with `400` | `serializers.py:46-47`, called from `views.py:39-42` |
+| **Reservation API + business rules** | class — `ReservationConfirmView`, helpers `conflict()`, `forbidden()`, `reservation_state()` | **Does everything else**: opens the transaction, loads the reservation, checks the actor, the state, the companion and the interval, asks about the conflict, picks the target state, writes it and shapes the response | `views.py:77-111`, helpers at `views.py:23-36` |
+| **Domain model + the BR-02 query** | module — `Reservation`, `Companion`, `ReservationStatus`, `blocking_reservations()` | Holds the state as a field, defines what "blocking" means in one place, and carries the `start_at < end_at` DB constraint | `models.py:39-72`, `models.py:75-86` |
+| **SQLite** | database (outside the application) | Stores the state; evaluates the BR-02 predicate as SQL | `config/settings.py:50-55` |
+
+The table shows the shape of the system: of the four application elements, **one does all the
+decision-making**. There is no service, no domain layer and no repository — the view talks to the ORM
+directly. That is the AS-IS fact this part exists to establish.
+
+## A5 — State, state change and one rule
+
+### State
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Where is `Reservation` state persisted? | One row per reservation in the SQLite table `reservations_reservation`, file `src/db.sqlite3`. The state itself is the `status` column, a `CharField` restricted by `ReservationStatus.choices`, default `DRAFT`. Times are stored in UTC (`USE_TZ = True`). | `models.py:39-50`, `config/settings.py:50-55`, `config/settings.py:65-67`; trace: `UPDATE ... SET ... status = 'CONFIRMED' ... WHERE id = ...` |
+| Which code decides and executes the transition? | The same place: `ReservationConfirmView.post()`. It decides the target state at `views.py:103-108` and executes the write at `views.py:109`. No model method, service or state machine is involved — `Reservation` is a passive data holder with no behaviour. | `views.py:77-111`; `models.py:39-72` contains no transition method |
+
+### Business rule: BR-02 — the exclusive companion invariant
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Where is the rule's condition detected? | **In the database.** `blocking_reservations()` only *builds* a queryset; the predicate is evaluated by SQLite when `.exists()` runs. The full probe: `SELECT 1 AS "a" FROM "reservations_reservation" WHERE ("companion_id" = 7 AND "end_at" > '2026-10-22 09:55:35' AND "start_at" < '2026-10-22 11:55:35' AND ("status" = 'CONFIRMED' OR ("approval_deadline" > '2026-10-15 09:55:35' AND "status" = 'PENDING_APPROVAL')) AND NOT ("id" = '6efc7d3c…')) LIMIT 1` | `models.py:75-86`; captured trace |
+| Where is the outcome decided? | **In three separate views**, each with its own copy of the decision: `ReservationConfirmView` (`views.py:94-101`), `ApprovalDecisionView` for OP-05 (`views.py:172-179`), and `AvailabilityView` for OP-02, which turns the same query into a boolean instead of an error (`views.py:64,70`). The *definition* of blocking lives in one place; the *reaction* to it is duplicated three times. | `views.py:64`, `:94`, `:172` |
+| Where is the resulting state change performed? | `views.py:109` (`reservation.save()`), inside the `transaction.atomic()` block opened at `views.py:80`. | trace: `UPDATE` between `BEGIN` and `COMMIT` |
+
+Nothing in the database enforces BR-02. The only DB-level constraint is
+`reservation_start_before_end` (`models.py:63-69`), which protects BR-01, not BR-02. If a row were
+inserted by any route other than these views, the invariant could be violated without complaint.
+
+## A6 — Relevant dependencies
+
+| Dependency | Where it connects to the code | Which part knows its technical API | Evidence |
+|---|---|---|---|
+| **SQLite** (database) | Through the Django ORM only. No raw SQL anywhere in the scenario. | `config/settings.py` names the engine; `models.py` and the querysets in `views.py` know the ORM API. The views depend on the ORM directly — there is no repository to swap. | `config/settings.py:50-55`; `models.py:75-86`; `views.py:81,94` |
+| **Notification Service** | **Not connected at all.** It is a boundary in the Project Frame and in the specification, but no code calls it in this scenario or any other. | `grep -rni "notif" src/ --include=*.py` → no match; no HTTP client or mail backend in `requirements.txt` (Django, DRF, pytest, pytest-django only) |
+| **Identity provider / authentication** | **None.** DRF authentication is switched off and the actor arrives as a number in the request body (D6, D7). | `config/settings.py:74-78` (`DEFAULT_AUTHENTICATION_CLASSES: []`, `AllowAny`); `serializers.py:46-47` |
+
+The last two rows are the interesting ones: both dependencies exist in the specification and neither
+exists in the code. Any C03 design that assumes they are "already integrated somewhere" would be wrong.
+
+## A7 — AS-IS structural diagram
+
+Current realization of **Confirm Reservation**. Only the calls this scenario actually makes are drawn.
+
+```
+                               POST /reservations/{uuid}/confirm
+                                      {"actor_user_id": N}
+                                               |
++------------------------------- Application code ------------------------------+
+|                                              v                                 |
+|  [HTTP routing]  (module)                                                      |
+|  role: resolves the URL to the view; a malformed uuid -> 404                   |
+|                            | confirm(pk)                                       |
+|                            v                                                   |
+|  [Reservation API + business rules]  (class)                                   |
+|  role: opens the transaction, checks the actor / state / companion / interval, |
+|        asks about the conflict, picks the target state, writes it, responds    |
+|          |                              |                                      |
+|          | validate actor_user_id       | build BR-02 queryset,                |
+|          v                              | read and write the Reservation       |
+|  [Actor input validation]  (class)      v                                      |
+|  role: actor_user_id -> User     [Domain model + BR-02 query]  (module)        |
+|        or 400                    role: holds status as a field; defines        |
+|          |                             "blocking" once; DB check constraint    |
+|          |                              |                                      |
++----------|------------------------------|-------------------------------------+
+           | SELECT auth_user             | SELECT 1 ... LIMIT 1  (evaluates BR-02)
+           | (outside the transaction)    | UPDATE ... SET status = 'CONFIRMED'
+           v                              v
+        +------------------------------------+
+        |  SQLite  src/db.sqlite3  (database)|
+        +------------------------------------+
+
+   NOT used by this scenario, and not present in the code at all:
+   [Notification Service] (external system)   [Identity provider] (external system)
+```
+
+Contents of the blocks:
+
+```
+HTTP routing:
+- config/urls.py
+- reservations/urls.py
+
+Reservation API + business rules:
+- ReservationConfirmView            (views.py:77-111)
+- conflict(), forbidden(), reservation_state(), actor_or_error()   (views.py:23-42)
+
+Actor input validation:
+- ActorSerializer                   (serializers.py:46-47)
+
+Domain model + BR-02 query:
+- Reservation, Companion, ReservationStatus   (models.py:9-72)
+- blocking_reservations()                     (models.py:75-86)
+```
+
+Two things the diagram deliberately shows as they are: the actor lookup happens **outside** the
+transaction boundary, and there is **no layer between the view and the ORM**.
+
+## A8 — One question to carry into the architecture design
+
+| Item | Content |
+|---|---|
+| **Question** | Can two concurrent confirmations of overlapping reservations for the same companion both pass the BR-02 check and both reach `CONFIRMED`? |
+| **Evidence** | The captured trace of one confirmation shows the BR-02 probe (`SELECT 1 … LIMIT 1`) and the `UPDATE` as two separate statements inside one `BEGIN … COMMIT`, with nothing locking the rows in between. `grep -rn "select_for_update" src/` returns no match, and SQLite does not support row locking (D3). The only test of REQ-04 calls the two confirmations one after the other (`tests/test_confirm.py:94`), so it cannot detect the race. |
+| **Why it matters** | REQ-04 is worded as a guarantee of the system, and BR-02 is the invariant the whole domain rests on — a double-booked companion is the worst failure this product can produce. Today the guarantee rests on requests not overlapping in time, which is an accident of low traffic, not a property of the design. The answer decides three things at once: whether the database must change (PostgreSQL with `select_for_update` or an exclusion constraint), where the invariant should be enforced (application or database — today **nothing** in the schema protects BR-02, only `start_at < end_at`), and whether the same decision duplicated across three views can stay duplicated. |
