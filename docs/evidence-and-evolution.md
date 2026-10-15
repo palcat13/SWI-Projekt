@@ -294,6 +294,15 @@ or past, which makes the rule total; `cancel` consults the effective status and 
 The tests are not vacuous: T-4 was run against the pre-DD predicates and fails there, and the two
 behaviour changes were measured on the old code before being changed.
 
+**Baseline consistency:** the C05 behaviour change was carried back into
+[specification.md](specification.md) as a **clarification inside baseline v0.2**, not as a new
+baseline. BR-03's first and last bullets had contradicted each other since C02 — one allowed a pending
+request to be cancelled any time before the start, the other declared `EXPIRED` terminal — and a
+pending request past its deadline satisfied both. C05 resolved the contradiction in favour of
+terminality and the implementation was corrected to match, so no requirement was added. Updated: BR-03,
+the OP-04 failure outcomes and verification examples, the v0.2 state diagram guard, and the Cancel row
+of the consistency table. Tag `v0.2` still marks the application's behaviour.
+
 **Remaining design risk:**
 - **The sweeper still has no scheduler.** C05 resolved *what `EXPIRED` means* — a projection being
   caught up with, now pinned by T-6 — but not *who runs the reconciliation*. Somebody still types the

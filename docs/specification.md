@@ -29,10 +29,12 @@ A companion is an exclusive resource: in no committed state of the system may tw
 - *(v0.2)* blocking states = {`CONFIRMED`, `PENDING_APPROVAL` whose `approval_deadline` has not passed}.
 
 **BR-03 — Cancellation policy.**
-- `DRAFT` and *(v0.2)* `PENDING_APPROVAL` may be cancelled any time before `start_at`.
+- `DRAFT` may be cancelled any time before `start_at`. *(v0.2)* `PENDING_APPROVAL` may be cancelled before `start_at` **while its approval window is still open**; once the window has closed the request is effectively `EXPIRED` and the last bullet applies.
 - `CONFIRMED` may be cancelled only **at least 24 h before `start_at`** — the companion has the slot blocked and needs notice.
 - Cancelling an already `CANCELLED` reservation is an idempotent success (no new state change).
-- `REJECTED` and *(v0.2)* `EXPIRED` are terminal; they cannot be cancelled.
+- `REJECTED` and *(v0.2)* `EXPIRED` are terminal; they cannot be cancelled. This is judged on the **effective** state: a `PENDING_APPROVAL` whose `approval_deadline` has passed counts as `EXPIRED` even if no process has written that status yet (D9).
+
+  > **Clarified in C05.** As originally written, the first and the last bullet contradicted each other for a pending request whose deadline had passed: one allowed the cancellation, the other forbade it. The detailed design of the approval unit resolved the contradiction in favour of terminality, and the implementation was corrected to match. No new requirement was added, so this stays baseline v0.2.
 - Cancellation never deletes data; it only changes the state.
 
 **BR-04 — Approval of the booked companion** *(v0.2, the domain-specific rule from C01)*.
@@ -196,7 +198,7 @@ Every state-changing operation carries `actor_user_id` in the request body. The 
 3. The system verifies the time boundary under BR-03.
 4. The system sets `CANCELLED` and returns the state.
 
-**Alternative / failure outcomes:** a stranger → `403 FORBIDDEN_ACTOR`; `CONFIRMED` less than 24 h before the start → `409 TOO_LATE`, remains `CONFIRMED`; `DRAFT` after the start → `409 TOO_LATE`; `REJECTED` / `EXPIRED` → `409 INVALID_STATE`; already `CANCELLED` → `200` with `idempotent: true`.
+**Alternative / failure outcomes:** a stranger → `403 FORBIDDEN_ACTOR`; `CONFIRMED` less than 24 h before the start → `409 TOO_LATE`, remains `CONFIRMED`; `DRAFT` after the start → `409 TOO_LATE`; a stored `REJECTED` / `EXPIRED` → `409 INVALID_STATE`; *(clarified in C05)* a `PENDING_APPROVAL` whose approval window has closed → `409 EXPIRED`, and the reservation is recorded as `EXPIRED`; already `CANCELLED` → `200` with `idempotent: true`.
 
 **Verification examples:**
 | Situation | Expected result |
@@ -207,6 +209,8 @@ Every state-changing operation carries `actor_user_id` in the request body. The 
 | `CONFIRMED`, start in 23 h 59 min | `409 TOO_LATE`, remains `CONFIRMED` |
 | `DRAFT`, start 5 min ago | `409 TOO_LATE` |
 | cancellation by the companion | `CANCELLED` |
+| `PENDING_APPROVAL`, window still open, before the start | `CANCELLED` |
+| `PENDING_APPROVAL`, window closed an hour ago, start in 7 days | `409 EXPIRED`, recorded as `EXPIRED` |
 | second cancellation | `200`, `idempotent: true` |
 
 **Rationale:** The 24 h notice for a confirmed reservation comes from the domain: the companion has the time blocked and has usually declined other offers. A draft blocks nothing, so it can be dropped until the start.
@@ -521,7 +525,7 @@ stateDiagram-v2
   PENDING_APPROVAL --> CONFIRMED: approve [the booked companion, before the deadline, no overlap] (OP-05)
   PENDING_APPROVAL --> REJECTED: reject [the booked companion, before the deadline] (OP-06)
   PENDING_APPROVAL --> EXPIRED: deadline passed [REQ-10]
-  PENDING_APPROVAL --> CANCELLED: cancel [before start] (OP-04)
+  PENDING_APPROVAL --> CANCELLED: cancel [before start, approval window still open] (OP-04)
   CONFIRMED --> CANCELLED: cancel [at least 24 h before start] (OP-04)
   CANCELLED --> [*]
   REJECTED --> [*]
@@ -551,7 +555,7 @@ flowchart TD
 |---|---|
 | BR-02 vs. OP-02 vs. OP-03 vs. OP-05 | Consistent: all three use the same definition of a blocking reservation, implemented once in `blocking_reservations()`. |
 | Availability vs. the deadline | Consistent: a pending reservation stops blocking at the moment of the deadline, independently of whether the sweeper has run. |
-| Cancel vs. the state diagram (v0.2) | Consistent: `PENDING_APPROVAL → CANCELLED` is in BR-03, in OP-04 and in the diagram; `REJECTED` and `EXPIRED` are terminal in all three places. |
+| Cancel vs. the state diagram (v0.2) | Consistent **after the C05 clarification**: `PENDING_APPROVAL → CANCELLED` carries the same guard in BR-03, in OP-04 and in the diagram — before the start *and* with the approval window still open. Terminality is judged on the effective state, so a pending request past its deadline is refused as `EXPIRED` in all three places. Before C05 the first and last bullets of BR-03 disagreed about exactly this case. |
 | OP-03 vs. BR-04 | Consistent: a direct `DRAFT → CONFIRMED` exists only for `requires_approval = false`; the diagram shows both branches with a guard. |
 | Use-case view vs. new operations | Consistent: OP-05 and OP-06 belong to the Companion, who was already an actor. |
 | Expiry vs. invented precision | The 24 h window is a declared team value from the C01 assumption, not an AI-invented timeout. |
