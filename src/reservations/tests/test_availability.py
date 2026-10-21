@@ -3,6 +3,8 @@
 from datetime import timedelta
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from reservations.models import ReservationStatus
@@ -149,3 +151,22 @@ def test_verdict_and_blocking_list_are_read_from_one_clock(
     )
 
     assert response.data["available"] is not bool(response.data["blocking_reservations"])
+
+
+@pytest.mark.django_db
+def test_verdict_and_blocking_list_come_from_one_query(
+    api_client, companion, make_reservation
+):
+    start = timezone.now() + timedelta(days=7)
+    make_reservation(companion, start_at=start, status=ReservationStatus.CONFIRMED)
+
+    with CaptureQueriesContext(connection) as queries:
+        response = api_client.get(
+            f"/companions/{companion.pk}/availability",
+            {"start_at": start.isoformat(), "end_at": (start + timedelta(hours=1)).isoformat()},
+        )
+
+    reservation_reads = [q for q in queries if 'FROM "reservations_reservation"' in q["sql"]]
+    assert len(reservation_reads) == 1  # a commit between two reads could split the answer
+    assert response.data["available"] is False
+    assert len(response.data["blocking_reservations"]) == 1

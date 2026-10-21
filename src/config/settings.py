@@ -51,6 +51,11 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        # BEGIN IMMEDIATE: a transaction takes the write lock before its BR-02 probe, so two
+        # racing confirmations are serialised and the second sees the first (REQ-04, ADR-01 addendum).
+        "OPTIONS": {"transaction_mode": "IMMEDIATE"},
+        # A file, not shared-cache memory: the REQ-04 race test needs real cross-connection locking.
+        "TEST": {"NAME": BASE_DIR / "test_db.sqlite3"},
     }
 }
 

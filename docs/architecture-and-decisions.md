@@ -66,7 +66,7 @@ scripts/check_architecture.py        ← repeatable check of the ADR-01 rule
 ### D3 — SQLite as the database for now
 - **Context:** CP1 and spike A need a real database; we want zero setup for the team.
 - **Decision:** SQLite via Django's default backend. No DB-specific SQL; everything goes through the ORM and migrations.
-- **Consequences:** Runs immediately from a clean checkout. SQLite allows only one writer at a time and does not support `select_for_update` row locking, so enforcing the overlap rule under concurrent confirmations will be weak. If concurrent confirmations become a real concern (outside our selected C01 pressure, which is C), the plan is to move to PostgreSQL (a settings change plus re-running migrations). **Superseded by [ADR-01](#adr-01--where-the-authoritative-confirmation-decision-is-made-and-what-enforces-br-02-under-concurrency):** that move is no longer tied to a future pressure but to ADR-01's explicit reconsider-when triggers.
+- **Consequences:** Runs immediately from a clean checkout. SQLite allows only one writer at a time and does not support `select_for_update` row locking, so enforcing the overlap rule under concurrent confirmations will be weak. If concurrent confirmations become a real concern (outside our selected C01 pressure, which is C), the plan is to move to PostgreSQL (a settings change plus re-running migrations). **Superseded by [ADR-01](#adr-01--where-the-authoritative-confirmation-decision-is-made-and-what-enforces-br-02-under-concurrency):** that move is no longer tied to a future pressure but to ADR-01's explicit reconsider-when triggers. *(Review 2026-10-21: "does not support `select_for_update`" is true, but SQLite locks the whole file, so writers never overlap; with `transaction_mode = "IMMEDIATE"` the overlap rule holds under concurrency without PostgreSQL — ADR-01 addendum.)*
 
 ### D4 — pytest + pytest-django for automated checks
 - **Context:** The walking skeleton needs an automated check.
@@ -107,6 +107,9 @@ scripts/check_architecture.py        ← repeatable check of the ADR-01 rule
 3. **The notification boundary** — four operations want to notify, and a notification failure must not roll back the state change. It needs an interface, a stub and a failure policy.
 4. **Rules inside views** — the checks for BR-02, BR-03 and BR-04 and the actor rules are repeated across four views in `views.py`. Extracting a domain layer where one state transition = one function is the main refactoring for C03.
 5. **The actor's identity** — `actor_user_id` (D7) is a stand-in for authentication and affects every state-changing operation.
+
+> **Correction (review 2026-10-21):** driver 1's "a real guarantee needs PostgreSQL" is not true; SQLite
+> `BEGIN IMMEDIATE` gives it, see the [ADR-01 addendum](#adr-01-addendum--2026-10-21-sqlite-immediate-transactions).
 
 ---
 
@@ -184,6 +187,15 @@ with **no `UPDATE`** — `HTTP 409 {"error": "OVERLAP", ...}`, state after the c
 
 Neither difference is a code defect: the first is a known limit of D3, the second is an unspecified but
 reasonable behaviour. Both belong in the specification's failure list, which is a C03 follow-up.
+
+> **Correction (review 2026-10-21).** The REQ-04 row overstates the failure. Two interleaved requests
+> can both *read* "no conflict", but they cannot both *write*: SQLite locks the whole database file, and
+> a deferred transaction that read under a shared lock cannot upgrade to a write lock while the other
+> holds it. A threaded experiment (both probes held at a barrier until both had run) never produced a
+> double booking; the losing write failed with `OperationalError: database is locked`, which the API
+> does not catch, so that client got `500` while the other got `200`. BR-02 held; REQ-04 did not, because the loser must receive
+> `409 OVERLAP`. The fix is recorded in the [ADR-01 addendum](#adr-01-addendum--2026-10-21-sqlite-immediate-transactions).
+> The rest of Part A stays as committed.
 
 ## A4 — The implementation elements that realize the scenario
 
@@ -300,6 +312,10 @@ transaction boundary, and there is **no layer between the view and the ORM**.
 | **Evidence** | The captured trace of one confirmation shows the BR-02 probe (`SELECT 1 … LIMIT 1`) and the `UPDATE` as two separate statements inside one `BEGIN … COMMIT`, with nothing locking the rows in between. `grep -rn "select_for_update" src/` returns no match, and SQLite does not support row locking (D3). The only test of REQ-04 calls the two confirmations one after the other (`tests/test_confirm.py:94`), so it cannot detect the race. |
 | **Why it matters** | REQ-04 is worded as a guarantee of the system, and BR-02 is the invariant the whole domain rests on — a double-booked companion is the worst failure this product can produce. Today the guarantee rests on requests not overlapping in time, which is an accident of low traffic, not a property of the design. The answer decides three things at once: whether the database must change (PostgreSQL with `select_for_update` or an exclusion constraint), where the invariant should be enforced (application or database — today **nothing** in the schema protects BR-02, only `start_at < end_at`), and whether the same decision duplicated across three views can stay duplicated. |
 
+> **Correction (review 2026-10-21).** The answer to the question is *no* on SQLite: both requests pass
+> the probe, but only one write succeeds (`200`) and the other fails with `database is locked` (`500`). See the
+> correction under A3. The question was still the right one to carry forward, because REQ-04 was not met.
+
 ---
 
 # C03 — Architecture: from the AS-IS implementation to an accepted design
@@ -319,7 +335,7 @@ and belong further down.
 
 | # | Evidence / source | Why it affects architecture | Question the architecture must answer |
 |---|---|---|---|
-| **DR-1** | `BR-02`, `REQ-04`; Part A A8 — the BR-02 probe and the `UPDATE` are separate statements, no `select_for_update` in the codebase, SQLite cannot lock rows | Two concurrent confirmations can both observe "no conflict" and both write. The worst failure in the domain (a double-booked companion) is reachable, and no schema constraint prevents it — the only DB constraint is `start_at < end_at`. | **Where must the authoritative confirmation decision be made, and what enforces `BR-02` when two requests race?** |
+| **DR-1** | `BR-02`, `REQ-04`; Part A A8 — the BR-02 probe and the `UPDATE` are separate statements, no `select_for_update` in the codebase, SQLite cannot lock rows | Two concurrent confirmations can both observe "no conflict" and both write. The worst failure in the domain (a double-booked companion) is reachable, and no schema constraint prevents it — the only DB constraint is `start_at < end_at`. *(Corrected 2026-10-21: on SQLite only one of them can write; the other fails with `database is locked` and its client gets `500`. The driver stands — REQ-04 was not met and a move to PostgreSQL would make the double booking real — see the ADR-01 addendum.)* | **Where must the authoritative confirmation decision be made, and what enforces `BR-02` when two requests race?** |
 | **DR-2** | `REQ-07`, `REQ-10`, D9; Part A A5 — `approval_deadline` is data, `EXPIRED` is written by a separate `manage.py` process | The approval outcome arrives after the request that started it has ended, and one state change (`→ EXPIRED`) has no actor at all. Two sources of truth about the same fact (the stored status vs. the live deadline) already exist. | **Who owns the pending-approval state and who performs the later transition, so that the stored state and the computed meaning cannot disagree?** |
 | **DR-3** | Project Frame + specification boundary; Part A A6 — `grep -rni "notif" src/` returns nothing, no HTTP client or mail backend in `requirements.txt` | Four operations are specified to notify, and the notification target is outside our trust and failure boundary. A failed notification must not undo a committed business decision. | **Where is the Notification Service integration isolated, and what does its failure mean for the outcome of Confirm?** |
 | **DR-4** | Part A A4/A5 — one element decides everything; the reaction to `BR-02` is duplicated in three views (`views.py:64`, `:94`, `:172`); no layer exists between the view and the ORM | The same rule is re-decided in three places, so the three can drift apart. Any change to a lifecycle rule means editing HTTP handlers. | **Which element owns a lifecycle transition, so that no two parts of the system can decide the same transition differently?** |
@@ -467,12 +483,12 @@ limiting it to blocking states. The application attempts the write and translate
 
 | Driver / criterion | Alternative A — application-layer owner | Alternative B — database-enforced invariant |
 |---|---|---|
-| **DR-1 — BR-02 under concurrency** | Not guaranteed on SQLite. The check and the write stay two statements; SQLite has no `select_for_update`, so two interleaved transactions can both read "free" and both write. On PostgreSQL the same code plus `select_for_update()` on the companion row would serialise them. | Guaranteed by construction, on any number of concurrent writers, and also against writes that bypass the application entirely (admin, shell, a future second service). The DB rejects the second overlapping row. |
+| **DR-1 — BR-02 under concurrency** | ~~Not guaranteed on SQLite. The check and the write stay two statements; SQLite has no `select_for_update`, so two interleaved transactions can both read "free" and both write. On PostgreSQL the same code plus `select_for_update()` on the companion row would serialise them.~~ *Correction 2026-10-21:* BR-02 holds on SQLite, REQ-04 does not by default. Two interleaved transactions can both read "free", but SQLite lets only one of them write; the other fails with `database is locked` and its client gets `500` instead of `409 OVERLAP`. With `transaction_mode = "IMMEDIATE"` the second waits and is refused with `409` (ADR-01 addendum). On PostgreSQL the same code needs `select_for_update()` on the companion row, otherwise READ COMMITTED would allow both writes. | Guaranteed by construction, on any number of concurrent writers, and also against writes that bypass the application entirely (admin, shell, a future second service). The DB rejects the second overlapping row. |
 | **DR-4 — one owner per transition** | Achieved in application code: exactly one module assigns `Reservation.status`, and it is mechanically checkable (L2). | Also achieved, and additionally un-bypassable — but the rule now lives in two places (the schema *and* the element that translates the error), so a reader must look in both to learn the rule. |
 | **DR-2 — approval state and expiry** | The live-deadline condition stays an ordinary queryset shared by availability and confirmation; no change needed. | The constraint condition must encode "`CONFIRMED` or live `PENDING_APPROVAL`", but a constraint condition cannot reference `now()` — it is not immutable. The deadline part of BR-02 **cannot** be expressed as an exclusion constraint, so B enforces only the `CONFIRMED` half and the pending half still needs the application check. |
 | **DR-3 — notification failure** | Unaffected; dispatch happens after commit in either design. | Unaffected. |
 | **Operational complexity / team** | Zero change: `git clone`, `pip install`, `pytest`. Keeps D3's "runs from a clean checkout with only Python". | Requires PostgreSQL running for every developer, for CI and for every test run, plus the `btree_gist` extension and a `BtreeGistExtension` migration. Breaks D3 and the README's build steps mid-semester. |
-| **Verifiability of REQ-04** | Can only be tested sequentially today, which is how C02 already verifies it. | Testable for real, including a genuine parallel test. |
+| **Verifiability of REQ-04** | ~~Can only be tested sequentially today, which is how C02 already verifies it.~~ *Correction 2026-10-21:* testable in parallel on SQLite too — two threads, a file database, a held probe (`tests/test_concurrency.py`). C02 had only the sequential test. | Testable for real, including a genuine parallel test. |
 
 Verified claim behind the DR-1 and operational rows: Django's `ExclusionConstraint` lives in
 `django.contrib.postgres.constraints`, requires PostgreSQL and the `btree_gist` extension, and the
@@ -497,12 +513,13 @@ complication of a **concurrent conflicting confirmation** and a **later approval
 | approval is required | Lifecycle asks Availability (`BR-02`), then asks the Approval policy for the deadline and writes `PENDING_APPROVAL` + `approval_deadline`. | Same, **but** the constraint cannot cover a pending row (its condition would need `now()`), so the `BR-02` check for this path is still the application check. The schema contributes nothing here. |
 | the initiating request ends | State is committed; the notification is dispatched after commit; the HTTP response carries the state and the deadline. | Identical. |
 | approval arrives later | A separate request reaches Lifecycle, which re-checks `BR-02` and writes `CONFIRMED`. | The `UPDATE` to `CONFIRMED` is now also checked by the constraint, so an overlap that slipped past the application check is rejected by the DB as an `IntegrityError` that Lifecycle must translate into `409 OVERLAP`. |
-| **concurrent conflicting confirmation** | Both requests may read "free" and both write. On SQLite the second writer is serialised but **not rejected** — the invariant can break. This is the accepted gap. | The second `UPDATE` violates the exclusion constraint and fails, so exactly one reaches `CONFIRMED`. REQ-04 holds for real. |
+| **concurrent conflicting confirmation** | ~~Both requests may read "free" and both write. On SQLite the second writer is serialised but **not rejected** — the invariant can break. This is the accepted gap.~~ *Correction 2026-10-21:* both may read "free", but only one can write; the other fails with `database is locked` and its client gets `500`. The invariant holds; REQ-04's `409 OVERLAP` does not. With `BEGIN IMMEDIATE` (ADR-01 addendum) the second request waits, re-reads and gets `409 OVERLAP`. | The second `UPDATE` violates the exclusion constraint and fails, so exactly one reaches `CONFIRMED`. REQ-04 holds for real. |
 | **notification fails** | The state change is already committed; dispatch runs after commit, so the failure cannot roll it back. | Identical. |
 
 Both alternatives can realize the required behaviour. They differ in exactly one observable way: what
 happens in the concurrency row — and, as DR-2 shows, B buys that only for the `CONFIRMED` half of the
-rule.
+rule. *(Review 2026-10-21: on SQLite that row ends in `500`, not in a double booking, and a third
+variant — A with `BEGIN IMMEDIATE` — removes it; see the ADR-01 addendum.)*
 
 ## F — ADR
 
@@ -543,6 +560,8 @@ transition, adding `select_for_update()` or a constraint is a change in one plac
 1. **`REQ-04` remains unguaranteed under true concurrency.** Two interleaved confirmations can still
    both pass the check. The guarantee rests on the absence of concurrent users, which is a property of
    our deployment, not of the design. This is now stated in the specification rather than implied.
+   *(Resolved within the busy-timeout limit by the [addendum](#adr-01-addendum--2026-10-21-sqlite-immediate-transactions);
+   the original wording is kept as the record of what was accepted on 2026-10-15.)*
 2. **Nothing outside the application protects `BR-02`.** A write through the Django admin, the shell or
    a future second process can violate the invariant without complaint.
 3. The lifecycle element uses the Django ORM directly, so persistence is not substitutable; there is no
@@ -559,6 +578,46 @@ transition, adding `select_for_update()` or a constraint is a change in one plac
 
 This supersedes the Postgres remark in **D3**: the move is no longer tied to "the Q pressure" but to the
 trigger list above.
+
+### ADR-01 addendum — 2026-10-21: SQLite IMMEDIATE transactions
+
+**Context.** The review of C03/C05 showed that E2 and E3 described the race wrongly (accepted consequence 1 was right that REQ-04
+was not met, for a different reason than E3 gave). Measured on this code: with SQLite's default deferred transactions, two confirmations held
+between their BR-02 probe and their write never both reached `CONFIRMED` — SQLite serialises writers
+on the database file — but the request that lost the lock failed with `OperationalError: database is
+locked`, an unhandled `500`; the winner got `200` (3 of 3 runs per case against a live server).
+The race test talks to a live server over real HTTP: Django's in-process test client hooks the
+process-wide `got_request_exception` signal, so in two threads one request's `500` is re-raised in
+the other and both look failed. So BR-02 held, but REQ-04 did not: it asks for `409 OVERLAP`.
+
+**Missed alternative.** E1 compared A with PostgreSQL only. A third option was cheaper than either:
+**A + `BEGIN IMMEDIATE`**. Django 5.1+ exposes it as `DATABASES[...]["OPTIONS"]["transaction_mode"]`;
+every `transaction.atomic()` then takes the write lock *before* its first statement, so the second
+confirmation waits, starts after the first committed, and its BR-02 probe sees the winner.
+
+**Decision.** Keep Alternative A and SQLite, and switch the connection to `transaction_mode =
+"IMMEDIATE"` (`src/config/settings.py`). The test database is a file (`TEST.NAME`): on the
+shared-cache in-memory database Django uses by default, the race test fails even with IMMEDIATE
+(`database table is locked` — shared-cache table locks do not wait for the busy timeout), so it would
+test a locking model production never uses.
+
+**Effect on the accepted negative consequences.**
+1. *REQ-04 under true concurrency* — **resolved within a limit.** The loser now gets `409 OVERLAP` and
+   stays `DRAFT`, for a direct confirmation and for one that ends in `PENDING_APPROVAL`. Approval
+   re-checks BR-02 inside the same kind of transaction, so it is serialised the same way, but it has
+   no race test of its own (two pending requests for one slot cannot coexist). Verified by `tests/test_concurrency.py` (two threads sending real HTTP
+   requests to a live server, both probes widened by a 0.2 s hold); without IMMEDIATE the same test
+   gives `200` + `500 database is locked`. **Limit:** a waiting writer gives up after SQLite's busy timeout (5 s —
+   the default of Python's `sqlite3.connect`, which Django does not override; `PRAGMA busy_timeout` = 5000); a lock held longer still ends in `500`. Throughput is one writer at a time.
+2. *Nothing outside the application protects BR-02* — **unchanged.** Locking serialises writers that
+   go through this code; it does not stop a write that skips the BR-02 check.
+3. and 4. — unchanged.
+
+**Reconsider when** — the trigger list above stays. `transaction_mode` is SQLite-only: a move to
+PostgreSQL must bring its own guarantee (`select_for_update()` on the companion row, or the exclusion
+constraint for the `CONFIRMED` half), because PostgreSQL's default READ COMMITTED with no lock would
+allow exactly the double booking E3 feared. A concurrency test that fails on that move is the point
+of `test_concurrency.py`.
 
 ## G1 — System context
 
@@ -603,12 +662,14 @@ flowchart TB
 
   api -->|"confirm / cancel / approve / reject (reservation, actor)"| life
   api -->|"is this interval available?"| avail
+  api -->|"load for 404; create a DRAFT (OP-01)"| persist
   life -->|"is the interval blocked? (BR-02)"| avail
-  life -->|"deadline for this request; which are overdue?"| appr
+  life -->|"needs approval? deadline? live / overdue predicate"| appr
+  avail -->|"live pending predicate"| appr
   life -->|"after commit: notify"| notifint
   life -->|"load / save Reservation"| persist
   avail -->|"query blocking reservations"| persist
-  appr -->|"query overdue requests"| persist
+  appr -.->|"reads approval fields (builds predicates, runs no query)"| persist
   persist -->|"SQL"| db
   notifint -.->|"send (not implemented)"| ext
 ```
@@ -616,6 +677,11 @@ flowchart TB
 Allowed dependency directions: `API → Lifecycle → {Availability, Approval Policy, Notification
 Integration, Persistence}`. The API may read availability directly (OP-02 changes no state). Nothing
 points back up: Lifecycle must not know about HTTP, and Availability must not know about Lifecycle.
+
+*Updated 2026-10-21 to match the code:* `Availability → Approval Policy` (the live-pending predicate,
+`availability.py` → `policy.live_q`) and `API → Persistence` (the `404` lookup and OP-01's create) are
+allowed and drawn; Approval Policy only *builds* predicates (`live_q`, `overdue_q`) — the overdue
+query itself is run by Lifecycle (`reconcile_overdue_approvals`).
 
 ## G3 — Transition ownership in the v0.2 statechart
 
@@ -660,7 +726,7 @@ flowchart TB
     c6b["Persistence"]
   end
 
-  db[("SQLite file<br/>src/db.sqlite3<br/>single writer at a time")]
+  db[("SQLite file<br/>src/db.sqlite3<br/>single writer at a time,<br/>BEGIN IMMEDIATE (ADR-01 addendum)")]
   ext["Notification Service<br/>external, not integrated"]
 
   p1 -->|read / write| db
@@ -671,7 +737,8 @@ flowchart TB
 Every logical element of G2 maps into process 1. Process 2 re-uses Reservation Lifecycle, Approval
 Policy and Persistence — it is the same code in a second OS process, not a copy. Both processes write
 to the same SQLite file, which allows one writer at a time; this is the runtime fact behind ADR-01's
-first accepted consequence.
+first accepted consequence. *(Review 2026-10-21: it is also what the addendum relies on — with
+`BEGIN IMMEDIATE` both processes queue for that one write lock instead of failing.)*
 
 ## H1 — Design sequence diagram: Confirm Reservation
 
@@ -698,6 +765,7 @@ sequenceDiagram
     API-->>C: 409 {"error": "OVERLAP"} — state unchanged
   else the interval is free
     AV-->>L: none
+    L->>AP: requires_approval(companion)
     alt the companion requires approval
       L->>AP: deadline_for(reservation, now)
       AP-->>L: min(now + 24 h, start_at)
@@ -729,11 +797,11 @@ classDiagram
   }
   class lifecycle {
     <<module — Reservation Lifecycle>>
-    +confirm(reservation, actor, now) TransitionOutcome
-    +cancel(reservation, actor, now) TransitionOutcome
-    +approve(reservation, actor, now) TransitionOutcome
-    +reject(reservation, actor, now) TransitionOutcome
-    +expire_overdue_approvals(now) int
+    +confirm(reservation, actor, now, policy) TransitionOutcome
+    +cancel(reservation, actor, now, policy) TransitionOutcome
+    +approve(reservation, actor, now, policy) TransitionOutcome
+    +reject(reservation, actor, now, policy) TransitionOutcome
+    +reconcile_overdue_approvals(now, policy) int
   }
   class TransitionRefused {
     <<exception>>
@@ -748,15 +816,17 @@ classDiagram
   }
   class availability {
     <<module — Availability>>
-    +blocking_reservations(companion, start_at, end_at, exclude_id, now)
-    +is_available(companion, start_at, end_at, now) bool
+    +blocking_reservations(companion, start_at, end_at, exclude_id, now, policy)
+    +assess(companion, start_at, end_at, now, policy) AvailabilityAnswer
+    +is_available(companion, start_at, end_at, now, policy) bool
   }
-  class approval {
-    <<module — Approval Policy>>
-    +APPROVAL_WINDOW
-    +deadline_for(reservation, now)
-    +live_pending_q(now)
-    +overdue_queryset(now)
+  class ApprovalPolicy {
+    <<interface — Approval Policy>>
+    +requires_approval(companion) bool
+    +deadline_for(reservation, now) datetime
+    +is_live(reservation, now) bool
+    +live_q(now) Q
+    +overdue_q(now) Q
   }
   class NotificationPort {
     <<interface>>
@@ -778,15 +848,22 @@ classDiagram
   TransitionView ..> lifecycle : calls the bound transition
   TransitionView ..> TransitionRefused : catches, maps to 403/409
   lifecycle ..> availability : BR-02
-  lifecycle ..> approval : deadline, overdue
+  lifecycle ..> ApprovalPolicy : requires_approval, deadline_for, overdue_q (is_live via approval.effective_status)
+  availability ..> ApprovalPolicy : live_q
   lifecycle ..> NotificationPort : after commit
   lifecycle --> TransitionOutcome : returns
   lifecycle ..> TransitionRefused : raises
   lifecycle --> Reservation : the only writer of status
   availability --> Reservation : queries
-  approval --> Reservation : queries
+  ApprovalPolicy ..> Reservation : reads
   NotificationPort <|.. LoggingNotificationPort
 ```
+
+*Updated 2026-10-21 to the code after C05:* the Approval Policy element is now the `ApprovalPolicy`
+interface (default `FixedWindowApprovalPolicy`, detailed in [C05 DD-3](#dd-3--design-elements-ownership-and-contracts)),
+the sweep is `reconcile_overdue_approvals`, and Availability answers OP-02 through `assess()`. The
+names this diagram had on 2026-10-15 (`expire_overdue_approvals`, `APPROVAL_WINDOW`, `live_pending_q`,
+`overdue_queryset`) no longer exist in the code.
 
 `TransitionRefused` carries a `kind` (`FORBIDDEN` / `CONFLICT`), not an HTTP status: the mapping to
 `403`/`409` belongs to the API element. This is what keeps the Lifecycle element free of HTTP and makes
@@ -805,6 +882,14 @@ Performed on the design above **before** any code was changed; re-run after K (s
 | statechart ↔ G3/H1 | Is each transition decided by the correct owner? | **One gap found and resolved:** the statechart's `[initial] → DRAFT` has no deciding element, because creation sets no status — the field default does. G3 now states this and scopes the ownership claim to transitions between states. | unchanged |
 | G2 ↔ G4 | Is each logical element realistically mapped to runtime? | Yes — all six into process 1; Lifecycle, Approval Policy and Persistence also run inside process 2 (the expiry command). | unchanged |
 | ADR ↔ G2/G4 | Is the accepted decision visible in the architecture? | Yes — ADR-01 appears as the Lifecycle element owning `Reservation.status`, as the absence of any BR-02 constraint in the Persistence element, and in G4 as two processes sharing one SQLite file. | unchanged |
+
+**Re-checked on 2026-10-21 (review of C03/C05).** H2 had kept names C05 removed and was updated to the
+code. The update exposed two G2 gaps the original check had missed: Availability depends on Approval
+Policy (`live_q`) and the API reads Persistence (the `404` lookup, OP-01's create) — both arrows now
+exist in G2, and Approval Policy's arrow to Persistence says it reads fields but runs no query. H1 now
+shows `requires_approval` as a call to Approval Policy, which G2 and H2 both carry, so **G2 ↔ H1** and
+**H1 ↔ H2** hold again. **ADR ↔ G2/G4:** the addendum is visible in G4's database node
+(`BEGIN IMMEDIATE`).
 
 A second inconsistency surfaced while writing B: the file already carried a *Architectural drivers for
 C03* list from C02. Two driver lists in one document is the defect this project hit in C01 with two
@@ -852,19 +937,27 @@ writing the status itself, which is what makes the L2 rule hold for the second p
 `TransitionRefused` carries `kind` + `code` + `detail` and no HTTP status, so the Lifecycle element
 imports nothing from the web framework — the property L2 checks.
 
+> **Since C05 / review 2026-10-21.** The table records what C03 moved. The names have changed since:
+> `expire_overdue_approvals` → `reconcile_overdue_approvals`; `APPROVAL_WINDOW`, `deadline_for()`,
+> `live_pending_q()` and `overdue_queryset()` → the `ApprovalPolicy` interface (`DEFAULT_WINDOW`,
+> `deadline_for`, `live_q`, `overdue_q`, see C05 DD-3); Availability gained `assess()`, which gives
+> OP-02 its verdict and its blocking list from one query; and the connection runs in
+> `transaction_mode = "IMMEDIATE"` (ADR-01 addendum).
+
 ## L1 — Behaviour verification
 
-Verified on 2026-10-15, Python 3.10.12, Django 5.2.17, DRF 3.18.1, after the restructuring.
+Verified on 2026-10-15, Python 3.10.12, Django 5.2.17, DRF 3.18.1, after the restructuring. Rows marked
+2026-10-21 were re-run on Python 3.11.16, Django 5.2.18, DRF 3.18.3.
 
 | Verification | Result | Evidence |
 |---|---|---|
 | **Success path** — OP-03 `DRAFT → CONFIRMED` | pass, unchanged | `tests/test_confirm.py:18`; live demo: `HTTP 200 {"id": "a2b936d9-…", "status": "CONFIRMED", "approval_deadline": null}` |
 | **Selected failure path** — overlap → rejection | pass, unchanged | `tests/test_confirm.py:80`; live demo: `HTTP 409 {"error": "OVERLAP", "detail": "The companion is not available for this interval."}`, reservation still `DRAFT` |
-| **Boundary** — `PENDING_APPROVAL` blocks only while its deadline is live | pass | `tests/test_availability.py:67`, `tests/test_approve.py:56` |
+| **Boundary** — `PENDING_APPROVAL` blocks only while its deadline is live | pass | `tests/test_availability.py::test_pending_approval_blocks_until_its_deadline`, `tests/test_approve.py::test_approval_after_the_deadline_expires_the_request` *(were `:67` and `:56`; the second pointed at an unrelated test — corrected 2026-10-21)* |
 | **Boundary** — cancellation 23 h 59 min vs. 24 h 01 min before the start | pass | `tests/test_cancel.py:53` and `:65` |
-| **Concurrency — REQ-04** | pass **sequentially only** | `tests/test_confirm.py:94`. True parallelism is still not verified; this is ADR-01's accepted consequence 1, not an oversight. |
+| **Concurrency — REQ-04** | pass **sequentially only** (2026-10-15) → **pass in parallel** (2026-10-21) | `tests/test_confirm.py:94`. On 2026-10-15 true parallelism was not verified. Since the ADR-01 addendum: `tests/test_concurrency.py`, two threads sending real HTTP requests to a live server → exactly one `200` and one `409 OVERLAP`; the same test without `IMMEDIATE` gives `200` + `500 database is locked`. |
 | **New — DR-3 notification boundary** | pass | `tests/test_notifications.py` — the notification is dispatched only after commit, a raising port leaves the reservation `CONFIRMED`, and a request awaiting approval emits its own event |
-| **Whole suite** | **61 passed** (52 C02 behaviour tests, unchanged and untouched by the refactor, + 5 architecture-rule tests + 3 notification tests + 1 regression test from the review below) | `pytest` |
+| **Whole suite** | **61 passed** (52 C02 behaviour tests, unchanged and untouched by the refactor, + 5 architecture-rule tests + 3 notification tests + 1 regression test from the review below); **80 passed** after C05 and the 2026-10-21 review fixes | `pytest` |
 | **Django checks** | `System check identified no issues (0 silenced).` | `manage.py check` |
 | **Schema unchanged** | `No changes detected` | `manage.py makemigrations --check --dry-run` |
 | **End-to-end through a running server** | all six operations, one success and one negative example each; every status code, error code and response shape identical to the pre-refactor run (the ids and timestamps differ, as they must between two runs) | `scripts/demo_c02.sh` |
@@ -884,7 +977,7 @@ calling `blocking_reservations()` for the list and `is_available()` for the verd
 its own `timezone.now()`. A `PENDING_APPROVAL` whose deadline fell between the two calls would be
 reported as `available: true` *and* listed as blocking — contradicting the specification's own
 consistency row, "a pending reservation stops blocking at the moment of the deadline". The view now
-resolves `now` once and passes it to both. `tests/test_availability.py:132` pins it, and the test was
+resolves `now` once and passes it to both. `tests/test_availability.py::test_verdict_and_blocking_list_are_read_from_one_clock` pins it, and the test was
 confirmed to fail against the broken version before the fix was kept.
 
 ## L2 — Architecture conformance
@@ -896,7 +989,11 @@ confirmed to fail against the broken version before the fix was kept.
 
 **Check** — `scripts/check_architecture.py`, an AST scan of every production module under
 `src/reservations/` (tests excluded). It reports, with file and line:
-- any assignment to a `.status` attribute, and any `.update(status=…)` call, outside `lifecycle.py`;
+- any assignment to a `.status` attribute, and any `.update(status=…)` call, outside
+  `reservations/lifecycle.py` — *since the 2026-10-21 review also* `setattr(x, "status", …)`,
+  `bulk_update(…, ["status", …])`, and `create` / `get_or_create` / `update_or_create` with `status=`
+  or `defaults={"status": …}`; the exemption is matched by path, so another file named `lifecycle.py`
+  is not exempt;
 - any import of `rest_framework`, `django.http` or `django.shortcuts` inside
   `lifecycle.py`, `availability.py`, `approval.py`, `notifications.py` or `models.py`.
 
@@ -915,20 +1012,24 @@ and no domain module depends on the web framework.
 ```
 
 **The check is not vacuous.** Run against the pre-refactor code (`git show f764c83:src/reservations/`)
-it reports exactly the five writes that Part A and J identified, and nothing else:
+it reports the six writes that J identified — five in the views and one in the expiry command — and
+nothing else. *(Corrected 2026-10-21: this listing first said "exactly the five writes" and left out
+the command; the checker as committed in `3d28f6e` reports all six.)*
 
 ```
-src/reservations/views.py:104: writes Reservation.status outside lifecycle.py
-src/reservations/views.py:108: writes Reservation.status outside lifecycle.py
-src/reservations/views.py:141: writes Reservation.status outside lifecycle.py
-src/reservations/views.py:168: writes Reservation.status outside lifecycle.py
-src/reservations/views.py:181: writes Reservation.status outside lifecycle.py
+src/reservations/management/commands/expire_pending_approvals.py:11: writes Reservation.status outside reservations/lifecycle.py
+src/reservations/views.py:104: writes Reservation.status outside reservations/lifecycle.py
+src/reservations/views.py:108: writes Reservation.status outside reservations/lifecycle.py
+src/reservations/views.py:141: writes Reservation.status outside reservations/lifecycle.py
+src/reservations/views.py:168: writes Reservation.status outside reservations/lifecycle.py
+src/reservations/views.py:181: writes Reservation.status outside reservations/lifecycle.py
 ```
 
 It correctly does **not** flag `models.py` (`status = models.CharField(...)` is a field definition, not
 an attribute write), the serializer's `read_only_fields = ["id", "status"]`, or any read of
-`reservation.status`. Four tests in `tests/test_architecture.py` pin this behaviour by running the
-checker against synthetic violations and a synthetic non-violation, so the check cannot silently rot
+`reservation.status`. The tests in `tests/test_architecture.py` — five in C03 (one on the real code, four synthetic), eleven
+since the review — pin this behaviour by running the checker against the real code, synthetic violations
+and a synthetic non-violation, so the check cannot silently rot
 into one that passes for the wrong reason.
 
 ---
@@ -937,6 +1038,10 @@ into one that passes for the wrong reason.
 
 Detailed Design of **one** C03 element. This is design intent written *before* the implementation that
 realizes it; section DD-6 reports honestly where the code then diverged and who won.
+
+*Reading note (added 2026-10-21):* where DD-2 to DD-4 say "today", "as it stands" or "the old code",
+they mean the code **before** C05 (`ea9e794`), which the design was written against. The names
+`live_pending_q` and `overdue_queryset` there are those pre-C05 functions; DD-6 describes the result.
 
 ## DD-1 — Selected architecture unit
 
@@ -1051,15 +1156,15 @@ classDiagram
   }
   class lifecycle {
     <<module — owns Reservation.status>>
-    +confirm(reservation, actor, now)
-    +approve(reservation, actor, now)
-    +reject(reservation, actor, now)
-    +cancel(reservation, actor, now)
+    +confirm(reservation, actor, now, policy)
+    +approve(reservation, actor, now, policy)
+    +reject(reservation, actor, now, policy)
+    +cancel(reservation, actor, now, policy)
     +reconcile_overdue_approvals(now, policy) int
   }
   class availability {
     <<module>>
-    +blocking_reservations(companion, start_at, end_at, exclude_id, now)
+    +blocking_reservations(companion, start_at, end_at, exclude_id, now, policy)
   }
   class Reservation {
     <<entity>>
@@ -1071,7 +1176,7 @@ classDiagram
 
   ApprovalPolicy <|.. FixedWindowApprovalPolicy
   approval ..> ApprovalPolicy : resolves the default
-  lifecycle ..> ApprovalPolicy : deadline_for, is_live, overdue_q
+  lifecycle ..> ApprovalPolicy : requires_approval, deadline_for, overdue_q
   lifecycle ..> approval : effective_status
   availability ..> ApprovalPolicy : live_q
   approval ..> Reservation : reads
@@ -1176,10 +1281,10 @@ sequenceDiagram
   L->>L: actor is the booked companion? (BR-04)
   L->>A: effective_status(reservation, now, policy)
   A->>P: is_live(reservation, now)
-  P-->>A: false — the deadline has passed (or is NULL)
-  A-->>L: EXPIRED
+  P-->>A: live?
+  A-->>L: PENDING_APPROVAL or EXPIRED
 
-  alt the request is no longer live
+  alt EXPIRED — the deadline has passed or is NULL
     L->>R: store status = EXPIRED (reconcile one row)
     L-->>L: raise TransitionRefused(CONFLICT, "EXPIRED")
   else the request is live
@@ -1206,7 +1311,7 @@ availability path in SQL. That is AGREEMENT in action.
 | **T-6** | reconciliation is observationally invisible (DR-2) | availability gives the same answer before and after reconciliation | component | an overdue pending over an interval; `available` is `true` both before and after the sweep |
 | **T-7** | failure behaviour, `NULL` deadline | a pending request with no deadline is a defined outcome, not a crash | unit | `effective_status` returns `EXPIRED`; approving it refuses with `EXPIRED` instead of raising `TypeError` |
 | **T-8** | changed contract of `cancel` | an effectively expired reservation cannot be cancelled (BR-03) | component | an overdue pending, cancelled before its start → refused with `EXPIRED`, stored as `EXPIRED` |
-| **T-9** | variation point AR-6 | injecting a different window changes the deadline and nothing else | unit | a 2 h policy produces `now + 2 h`; the lifecycle code is untouched |
+| **T-9** | variation point AR-6 | injecting a different window changes the deadline and nothing else | component | `lifecycle.confirm(…, policy=2 h)` stores `PENDING_APPROVAL` with `now + 2 h`; the default still gives `now + 24 h`; `requires_approval`, `is_live`, `live_q`, `overdue_q` answer alike under both policies *(the "nothing else" half added in the 2026-10-21 review — the first version checked only the deadline)* |
 
 Two of them explained, as the assignment asks:
 
@@ -1248,7 +1353,7 @@ did with it.
 |---|---|---|---|
 | `ApprovalPolicy` as an interface with all five operations | **YES** | `approval.py` — an `ABC` with `requires_approval`, `deadline_for`, `is_live`, `live_q`, `overdue_q` | keep |
 | `FixedWindowApprovalPolicy(window)` as the default implementation | **YES** | `approval.py`; `DEFAULT_WINDOW = 24 h` | keep |
-| AR-6 variation point: injectable policy with a production default | **YES** | `get_policy()` / `set_policy()`, plus a `policy=` parameter on `confirm`, `cancel`, `approve`, `reject`, `reconcile_overdue_approvals`, `blocking_reservations`, `is_available` | keep |
+| AR-6 variation point: injectable policy with a production default | **YES** | `get_policy()` / `set_policy()`, plus a `policy=` parameter on `confirm`, `cancel`, `approve`, `reject`, `reconcile_overdue_approvals`, `blocking_reservations`, `is_available` (and `assess`, added by the 2026-10-21 review) | keep |
 | AR-1: the lifecycle owner asks the policy instead of reading the column | **YES** | `lifecycle.confirm` now calls `policy.requires_approval(...)` | keep |
 | AGREEMENT: one rule, two representations, one owner | **YES** | `availability` uses `policy.live_q`, the decision path uses `policy.is_live` through `effective_status`; T-3 | keep |
 | TOTALITY: live ∪ overdue covers every pending row, disjointly | **YES** | `live_q` requires a non-null deadline, `overdue_q` accepts null *or* past; T-4 | keep |
@@ -1277,6 +1382,10 @@ Both were found by writing the contract first and only then looking at the code.
    `PENDING_APPROVAL` whose deadline had passed an hour earlier was accepted and stored as `CANCELLED`.
    The reservation is now materialised as `EXPIRED` and the cancellation is refused.
 
-Neither was reachable through the HTTP API in a normal run — `confirm` always sets a deadline, and the
-overdue-cancel window is narrow — which is why 61 passing tests had not caught either. They were found
-by writing down the contract.
+The first was not reachable through the HTTP API in a normal run — `confirm` always sets a deadline.
+*(Corrected 2026-10-21.)* The second was: the window between the deadline and the start is
+`start_at − min(now + 24 h, start_at)`, so a request made a week ahead stays cancellable-by-mistake
+for six days, and nothing runs the sweep on a schedule. Specification OP-04 lists exactly that case
+("window closed an hour ago, start in 7 days" — an example C05 itself added in `49e90eb`). The 61 tests
+missed the first because no test created a pending request without a deadline, and the second because
+none looked at an overdue request through cancel; both were found by writing down the contract.

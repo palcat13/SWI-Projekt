@@ -53,16 +53,15 @@ class AvailabilityView(APIView):
         start_at = query.validated_data["start_at"]
         end_at = query.validated_data["end_at"]
 
-        now = timezone.now()
-        blocking = availability.blocking_reservations(companion, start_at, end_at, now=now)
+        answer = availability.assess(companion, start_at, end_at, now=timezone.now())
         return Response(
             {
                 "companion_id": companion.pk,
                 "start_at": start_at,
                 "end_at": end_at,
-                "available": availability.is_available(companion, start_at, end_at, now=now),
+                "available": answer.available,
                 "companion_active": companion.is_active,
-                "blocking_reservations": [str(pk) for pk in blocking.values_list("id", flat=True)],
+                "blocking_reservations": [str(pk) for pk in answer.blocking_ids],
             }
         )
 

@@ -146,11 +146,23 @@ def test_t8_an_effectively_expired_reservation_cannot_be_cancelled(
     assert Reservation.objects.get(id=reservation.id).status == ReservationStatus.EXPIRED
 
 
-def test_t9_the_window_is_a_variation_point():
+@pytest.mark.django_db
+def test_t9_the_window_is_a_variation_point(approval_companion, customer, make_reservation):
     now = timezone.now()
-    reservation = SimpleNamespace(start_at=now + timedelta(days=7))
-
     short = FixedWindowApprovalPolicy(window=timedelta(hours=2))
+    reservation = make_reservation(approval_companion)
 
-    assert short.deadline_for(reservation, now) == now + timedelta(hours=2)
+    outcome = lifecycle.confirm(reservation, customer, now=now, policy=short)
+
+    assert outcome.reservation.status == ReservationStatus.PENDING_APPROVAL
+    assert outcome.reservation.approval_deadline == now + timedelta(hours=2)
     assert POLICY.deadline_for(reservation, now) == now + timedelta(hours=24)
+
+    # ... and nothing else: the other four operations answer alike under both policies.
+    pending = Reservation.objects.get(id=reservation.id)
+    later = now + timedelta(hours=1)
+    for policy in (short, POLICY):
+        assert policy.requires_approval(approval_companion) is True
+        assert policy.is_live(pending, later) is True
+        assert Reservation.objects.filter(policy.live_q(later)).count() == 1
+        assert Reservation.objects.filter(policy.overdue_q(later)).count() == 0

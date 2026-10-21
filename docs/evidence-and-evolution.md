@@ -154,6 +154,12 @@ Create (REQ-01), the cancellation boundary (REQ-05), idempotency (REQ-06), BR-01
 4. The domain rules living in `views.py` and the actor rules repeated in four views → extract a domain layer (one transition = one function).
 5. Real authentication instead of `actor_user_id` (D7).
 
+> **Correction (review 2026-10-21):** "SQLite cannot lock rows" is true, but it locks the whole file, so
+> two writers never overlap and no double booking was possible — the loser failed with `database is
+> locked` (`500`) while the winner got `200`. REQ-04 is now guaranteed on SQLite with `transaction_mode = "IMMEDIATE"` and verified in
+> parallel (see *C03/C05 review fixes* below); PostgreSQL is not required for it. REQ-09's re-check of
+> BR-02 at approval runs in the same kind of transaction, but has no parallel test of its own.
+
 ## Commit / tag
 Baseline v0.2 was merged to `main` in PR #3, merge commit `e0f3ced`. The corrections from the team review (the OP-06 examples, the two activity diagrams, this evidence) follow in the review commit on top of it. The state of the application for CP1 is marked by the annotated tag **`v0.2`** — `git tag -l v0.2` on `main` must list it; if it does not, the tag was never pushed and this line is the place to notice it.
 
@@ -189,7 +195,8 @@ that row only for the `CONFIRMED` half of BR-02, because a constraint condition 
 the pending half depends on `now()`.
 
 **ADR:** ADR-01 chooses **Alternative A** and keeps SQLite. Accepted negative consequences, recorded
-rather than hidden: REQ-04 stays unguaranteed under true concurrency; nothing outside the application
+rather than hidden: REQ-04 stays unguaranteed under true concurrency *(resolved 2026-10-21 by the ADR-01
+addendum, see* C03/C05 review fixes*)*; nothing outside the application
 protects BR-02; persistence is not substitutable; one more indirection per operation. Four explicit
 reconsider-when triggers, the first being more than one concurrent user. ADR-01 supersedes the Postgres
 remark in D3.
@@ -230,12 +237,14 @@ ids and timestamps differing as they must between two runs. Full table in L1.
 **Architecture conformance rule + result:** *only `lifecycle.py` may write `Reservation.status`, and no
 domain module may import the web framework.* Checked by `scripts/check_architecture.py` (AST scan, also
 runnable as `pytest src/reservations/tests/test_architecture.py`) → **passes**. Run against the
-pre-refactor commit it reports exactly the five status writes Part A identified, so the check is proven
-to detect the violation it is meant to prevent.
+pre-refactor commit it reports the status writes J identified — six, the expiry command
+included *(corrected 2026-10-21: "exactly the five")* — so the check is proven to detect the violation
+it is meant to prevent.
 
 **Remaining uncertainty / risk:**
 - **REQ-04 under real parallelism** is still unverified and, by ADR-01, unguaranteed. The first
-  reconsider-when trigger is a second concurrent user.
+  reconsider-when trigger is a second concurrent user. *(Resolved 2026-10-21 — see* C03/C05 review
+  fixes*.)*
 - **BR-02 is not protected outside the application** — admin, shell or a second process can violate it.
 - **Expiry still has no scheduler** (D9, DR-2): `EXPIRED` is materialised by a command somebody runs.
   Availability stays correct meanwhile because the deadline is data, but the two can disagree about the
@@ -271,17 +280,20 @@ Reservation Lifecycle element. Requirements REQ-07 … REQ-10; rules BR-02, BR-0
 | reconciliation does not change what the system means (DR-2) | T-6 | component |
 | a `NULL` deadline is defined, not a crash | T-7, T-7b | unit + component |
 | an effectively expired reservation cannot be cancelled (BR-03) | T-8 | component |
-| the approval window is a variation point | T-9 | unit |
+| the approval window is a variation point | T-9 | component |
 
-**Unit/component tests executed:** `pytest` → **71 passed** (61 before C05, plus the ten above).
+**Unit/component tests executed:** `pytest` → **71 passed** (61 before C05, plus the ten above);
+**80 passed** after the 2026-10-21 review fixes (T-9 strengthened, plus nine new tests listed there).
 `manage.py check` → no issues. `makemigrations --check --dry-run` → `No changes detected` — the design
 needed no schema change. `scripts/demo_c02.sh` ran end to end with all fourteen expected HTTP results
 unchanged. `scripts/check_architecture.py` still passes, so the C05 work did not break the ADR-01
 rule: the policy supplies predicates and the lifecycle element remains the only writer of
 `Reservation.status`.
 
-**Design ↔ implementation mismatch:** two, both found by writing the contract before reading the code,
-and neither reachable through the API in a normal run — which is why 61 passing tests had missed them.
+**Design ↔ implementation mismatch:** two, both found by writing the contract before reading the code.
+The first was not reachable through the API in a normal run; the second was — an overdue pending
+request stays open to cancel until its start, often for days — but no test had looked at that case.
+*(Corrected 2026-10-21: this line first said neither was reachable.)*
 1. A `PENDING_APPROVAL` with no `approval_deadline` crashed the decision path with
    `TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.datetime'`, and the two
    SQL predicates both excluded it, so it was neither live nor overdue.
@@ -301,7 +313,11 @@ request to be cancelled any time before the start, the other declared `EXPIRED` 
 pending request past its deadline satisfied both. C05 resolved the contradiction in favour of
 terminality and the implementation was corrected to match, so no requirement was added. Updated: BR-03,
 the OP-04 failure outcomes and verification examples, the v0.2 state diagram guard, and the Cancel row
-of the consistency table. Tag `v0.2` still marks the application's behaviour.
+of the consistency table. *(Corrected 2026-10-21.)* Tag `v0.2` (`f764c83`) marks the behaviour **as of
+C02**: there, cancelling an overdue pending request returns `200 CANCELLED`. The behaviour after C05 —
+`409 EXPIRED` — is identified by commit `6505316` (code) and `49e90eb` (specification). The
+specification baseline stays v0.2 because the requirement text did not change, only an internal
+contradiction in it was resolved; the application's behaviour did change, and no new tag was cut.
 
 **Remaining design risk:**
 - **The sweeper still has no scheduler.** C05 resolved *what `EXPIRED` means* — a projection being
@@ -312,8 +328,44 @@ of the consistency table. Tag `v0.2` still marks the application's behaviour.
   policy ever ships.
 - **The 24 h window still has no external source.** C05 gave it a home and made it injectable; it did
   not make it right.
-- Everything carried out of C03 is unchanged: REQ-04 under true concurrency, BR-02 unprotected outside
-  the application, the notification transport, and `actor_user_id` instead of authentication.
+- Carried out of C03 and unchanged: BR-02 unprotected outside the application, the notification
+  transport, and `actor_user_id` instead of authentication. *(REQ-04 under true concurrency was on this
+  list until the 2026-10-21 review fixes; it now holds within SQLite's 5 s busy timeout.)*
 
-**Commit / tag:** branch `c05-detailed-design`, on top of `ea9e794` (C03, merged to `main`). Baseline
-v0.2 behaviour is unchanged, so tag `v0.2` still marks the application's behaviour.
+**Commit / tag:** C05 is commit **`6505316`** (design, code, tests) and **`49e90eb`** (the specification
+clarification), on branch `c05-detailed-design`, on top of `ea9e794` (C03); `main` was fast-forwarded
+to `49e90eb`. No tag: tag `v0.2` marks the C02 behaviour (see *Baseline consistency*). The review
+fixes below follow on branch `c05-review-fixes`.
+
+---
+
+# C03/C05 review fixes (2026-10-21)
+
+A review of C03 and C05 checked every claim against the code and re-ran the experiments. What it found,
+and what changed:
+
+| Finding | Evidence | Change |
+|---|---|---|
+| ADR-01, E2, E3 and Part A said two racing confirmations on SQLite "both write" and break BR-02 | Two threads held between the BR-02 probe and the write: never a double booking; the loser failed with `OperationalError: database is locked` (`500`), the winner got `200`. | BR-02 held, REQ-04 did not. The original text is kept (struck through in E2/E3) with a dated correction after it |
+| The comparison missed the cheapest alternative, A + `BEGIN IMMEDIATE` | Django 5.2 `DATABASES[…]["OPTIONS"]["transaction_mode"]` | `transaction_mode = "IMMEDIATE"` in `settings.py`; [ADR-01 addendum](architecture-and-decisions.md#adr-01-addendum--2026-10-21-sqlite-immediate-transactions) |
+| "REQ-04 can be tested only sequentially / a parallel test needs PostgreSQL" | the experiment itself | `tests/test_concurrency.py` (2 cases, real HTTP against a live server): exactly one `200` and one `409 OVERLAP`; 5/5 runs pass; the same test fails without IMMEDIATE (`[200, 500]`, `database is locked`) and on the default in-memory test DB (`database table is locked`), hence `TEST.NAME` is a file |
+| `AvailabilityView` read the blocking set twice, so a commit between the reads could split the answer | code: two queries in one request, no transaction | `availability.assess()` returns the verdict and the list from one query; test counts one reservation query and fails on the old code (2 queries) |
+| `check_architecture.py` missed `setattr`, `bulk_update`, `create(status=…)`, and exempted any file named `lifecycle.py` | code reading | detected now, exemption by path; 6 new tests; still reports all six writes at `f764c83` |
+| L2 said the checker reports "exactly the five writes" at `f764c83` | the committed checker reports six (the expiry command too) | listing corrected |
+| T-9 promised "the deadline and nothing else" but checked only the deadline | test reading | T-9 now runs `confirm` with the injected policy and compares the other four operations under both policies |
+| H2 and K used names C05 had removed | `grep` in `src/` | H2 updated to the code; K keeps the C03 record with a note on the renames |
+| C05 evidence: "tag v0.2 still marks the application's behaviour"; no commit hash; "neither mismatch reachable through the API" | `git show f764c83`: cancel of an overdue pending → `CANCELLED`; spec OP-04's own example (7 days ahead) | corrected above in the C05 section |
+
+**Verification:** `pytest` → **80 passed**; `manage.py check` → no issues; `makemigrations --check
+--dry-run` → `No changes detected` (the settings change needs no migration);
+`scripts/check_architecture.py` → rules hold; `scripts/demo_c02.sh` against a live server → the same
+fourteen HTTP results as before.
+
+**Remaining risk:** a write lock held longer than SQLite's busy timeout (5 s) still ends in `500`;
+writes are one at a time; `transaction_mode` is SQLite-only, so a move to PostgreSQL must add
+`select_for_update()` or a constraint — `test_concurrency.py` is there to fail if it does not.
+The test database is now one file (`src/test_db.sqlite3`), so two `pytest` runs in the same checkout
+at the same time break each other; run one at a time. `check_architecture.py` still does not see
+`Reservation(status=…)` followed by `save()`, `bulk_create`, or `update(**{"status": …})`.
+
+**Commit:** branch `c05-review-fixes`, on top of `49e90eb`.

@@ -164,6 +164,7 @@ Every state-changing operation carries `actor_user_id` in the request body. The 
 |---|---|
 | `DRAFT`, active companion, no overlap | `CONFIRMED` |
 | two overlapping drafts, confirmed one after the other | the first `CONFIRMED`, the second `409 OVERLAP` and still `DRAFT` |
+| two overlapping drafts, confirmed **at the same time** *(added 2026-10-21)* | exactly one `CONFIRMED`, the other `409 OVERLAP` and still `DRAFT` |
 | two touching drafts `[10,11)` and `[11,12)` | both `CONFIRMED` (BR-01) |
 | confirmation by a stranger | `403`, remains `DRAFT` |
 | already `CONFIRMED` | `409 INVALID_STATE` |
@@ -173,6 +174,7 @@ Every state-changing operation carries `actor_user_id` in the request body. The 
 **Rationale:** Confirmation is the moment the allocation arises, so this is where BR-02 must hold. The check and the state change happen in one transaction with the overlap re-checked inside it.
 
 **TBD / assumption:** Under a genuinely parallel load, REQ-04 depends on the database's isolation. SQLite (D3) does not support row locking, so we verify the requirement sequentially; a parallel test needs PostgreSQL — an architectural driver for C03.
+*Resolved 2026-10-21 (review of C03/C05):* SQLite locks the whole file, and with `transaction_mode = "IMMEDIATE"` the second confirmation waits for the first and is refused with `409 OVERLAP`. A parallel test on SQLite exists (`tests/test_concurrency.py`). Limit: a lock held longer than the 5 s busy timeout ends in `500`. See the ADR-01 addendum in `architecture-and-decisions.md`.
 
 ## OP-04 — Cancel Reservation
 
@@ -225,7 +227,7 @@ Every requirement went through the team review. Summary of the answers:
 | REQ-01 | "valid interval" = BR-01, "active" = `is_active` | records intent without blocking | outcome: reservation in `DRAFT` | HTTP `201` + a row in the DB | depends on `now` (start in the future) |
 | REQ-02 | "unavailable" = overlaps a blocking state | the customer needs to know before confirming | outcome: `available` + the blocking ids | availability examples incl. touching intervals | read-only; result depends on `now` for pending *(v0.2)* |
 | REQ-03 | "does not conflict" = BR-02 | this is where the allocation arises | outcome: `CONFIRMED` / `409 OVERLAP` | confirmation examples | boundary `now < start_at`; concurrency → REQ-04 |
-| REQ-04 | "at most one" is a business outcome, not a lock | double-booking is the worst failure of the domain | outcome: exactly one `CONFIRMED` | two attempts in sequence; parallel is a TBD (D3) | concurrency is the whole point of the requirement |
+| REQ-04 | "at most one" is a business outcome, not a lock | double-booking is the worst failure of the domain | outcome: exactly one `CONFIRMED` | two attempts in sequence; *(since 2026-10-21)* two attempts in parallel | concurrency is the whole point of the requirement |
 | REQ-05 | "24 h before the start" against the server clock (BR-05) | the companion needs notice | outcome: `CANCELLED` / `409 TOO_LATE` | the 23 h 59 / 24 h 01 boundary | purely a time boundary |
 | REQ-06 | idempotency = the same result, no new change | retries and double clicks | outcome: `200` + `idempotent` | second cancellation | order-independent |
 | REQ-07 *(v0.2)* | deadline = `min(now + 24 h, start_at)` | a request cannot hang forever | outcome: `PENDING_APPROVAL` + deadline | a companion with `requires_approval` | the deadline is data, computed from `now` |
@@ -561,7 +563,7 @@ flowchart TD
 | Expiry vs. invented precision | The 24 h window is a declared team value from the C01 assumption, not an AI-invented timeout. |
 
 ## Architectural drivers for C03
-1. **Concurrency around BR-02.** REQ-04 and REQ-09 are business outcomes that depend on isolation. SQLite cannot lock rows, so a real guarantee needs PostgreSQL plus `select_for_update` or a DB-level exclusion constraint.
+1. **Concurrency around BR-02.** REQ-04 and REQ-09 are business outcomes that depend on isolation. SQLite cannot lock rows, so a real guarantee needs PostgreSQL plus `select_for_update` or a DB-level exclusion constraint. *(Corrected 2026-10-21: for REQ-04, SQLite with `BEGIN IMMEDIATE` gives the guarantee too and a parallel test shows it — ADR-01 addendum. REQ-09's approval path is serialised the same way but has no parallel test.)*
 2. **A time-driven process.** `EXPIRED` is the first state change with no user behind it. Today it is a `manage.py` command that somebody has to run; it needs a scheduler or an evaluation at read time — and the two must not disagree.
 3. **The notification boundary.** Four operations now want to notify (request, approval, rejection, cancellation), and a notification failure must not roll back the state change. This calls for an interface with a stub plus a retry policy.
 4. **Rules inside views.** The BR-02, BR-03 and BR-04 checks sit in `views.py` next to HTTP handling, and the actor rules are repeated in four places. This is the target for C03's restructuring: a domain layer where a state transition is one function.

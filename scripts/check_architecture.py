@@ -13,7 +13,8 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "src" / "reservations"
 
-STATUS_OWNER = "lifecycle.py"
+STATUS_OWNER = Path("reservations") / "lifecycle.py"
+CREATE_METHODS = {"create", "get_or_create", "update_or_create"}
 DOMAIN_MODULES = {"lifecycle.py", "availability.py", "approval.py", "notifications.py", "models.py"}
 FORBIDDEN_IMPORTS = ("rest_framework", "django.http", "django.shortcuts")
 
@@ -30,12 +31,33 @@ def status_writes(tree: ast.AST) -> list[int]:
             for target in targets:
                 if isinstance(target, ast.Attribute) and target.attr == "status":
                     found.append(node.lineno)
-        elif isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Attribute) and func.attr == "update":
-                if any(keyword.arg == "status" for keyword in node.keywords):
-                    found.append(node.lineno)
+        elif isinstance(node, ast.Call) and writes_status_by_call(node):
+            found.append(node.lineno)
     return sorted(set(found))
+
+
+def is_status_literal(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value == "status"
+
+
+def writes_status_by_call(call: ast.Call) -> bool:
+    func = call.func
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+    if isinstance(func, ast.Name) and func.id == "setattr":
+        return len(call.args) >= 2 and is_status_literal(call.args[1])
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr == "update" or func.attr in CREATE_METHODS:
+        if "status" in keywords:
+            return True
+        defaults = keywords.get("defaults")
+        if isinstance(defaults, ast.Dict) and any(map(is_status_literal, defaults.keys)):
+            return True
+    if func.attr == "bulk_update":
+        fields = keywords.get("fields", call.args[1] if len(call.args) >= 2 else None)
+        if isinstance(fields, (ast.List, ast.Tuple, ast.Set)):
+            return any(map(is_status_literal, fields.elts))
+    return False
 
 
 def forbidden_imports(tree: ast.AST) -> list[tuple[int, str]]:
@@ -59,7 +81,7 @@ def violations(root: Path = APP) -> list[str]:
         tree = ast.parse(path.read_text(), filename=str(path))
         relative = path.relative_to(root.parent.parent)
 
-        if path.name != STATUS_OWNER:
+        if path.relative_to(root.parent) != STATUS_OWNER:
             for line in status_writes(tree):
                 report.append(f"{relative}:{line}: writes Reservation.status outside {STATUS_OWNER}")
 

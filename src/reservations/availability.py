@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
@@ -27,6 +28,28 @@ def blocking_reservations(
     return queryset
 
 
+@dataclass(frozen=True)
+class AvailabilityAnswer:
+    available: bool
+    blocking_ids: list[UUID]
+
+
+def assess(
+    companion: Companion,
+    start_at: datetime,
+    end_at: datetime,
+    now: datetime | None = None,
+    policy: approval.ApprovalPolicy | None = None,
+) -> AvailabilityAnswer:
+    """The OP-02 verdict and the blocking list, taken from one query so they cannot disagree."""
+    blocking_ids = list(
+        blocking_reservations(companion, start_at, end_at, now=now, policy=policy).values_list(
+            "id", flat=True
+        )
+    )
+    return AvailabilityAnswer(companion.is_active and not blocking_ids, blocking_ids)
+
+
 def is_available(
     companion: Companion,
     start_at: datetime,
@@ -34,6 +57,4 @@ def is_available(
     now: datetime | None = None,
     policy: approval.ApprovalPolicy | None = None,
 ) -> bool:
-    return companion.is_active and not blocking_reservations(
-        companion, start_at, end_at, now=now, policy=policy
-    ).exists()
+    return assess(companion, start_at, end_at, now=now, policy=policy).available

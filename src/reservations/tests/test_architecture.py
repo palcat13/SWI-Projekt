@@ -70,3 +70,35 @@ def test_the_check_does_not_flag_a_model_field_or_a_read(checker, tmp_path):
     )
 
     assert checker.violations(app) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(r):\n    setattr(r, 'status', 'CONFIRMED')\n",
+        "def f(qs, rows):\n    qs.bulk_update(rows, ['status'])\n",
+        "def f(qs, rows):\n    qs.bulk_update(rows, fields=('status', 'end_at'))\n",
+        "def f(m):\n    m.objects.create(status='CONFIRMED')\n",
+        "def f(m):\n    m.objects.update_or_create(id=1, defaults={'status': 'CONFIRMED'})\n",
+    ],
+)
+def test_the_check_detects_indirect_status_writes(checker, tmp_path, source):
+    app = tmp_path / "src" / "reservations"
+    app.mkdir(parents=True)
+    (app / "services.py").write_text(source)
+
+    report = checker.violations(app)
+
+    assert len(report) == 1
+    assert "services.py:2" in report[0]
+
+
+def test_only_the_lifecycle_module_of_the_app_is_exempt(checker, tmp_path):
+    app = tmp_path / "src" / "reservations"
+    (app / "legacy").mkdir(parents=True)
+    (app / "legacy" / "lifecycle.py").write_text("def f(r):\n    r.status = 'CONFIRMED'\n")
+
+    report = checker.violations(app)
+
+    assert len(report) == 1
+    assert "legacy/lifecycle.py:2" in report[0]
