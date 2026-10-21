@@ -368,4 +368,5 @@ The test database is now one file (`src/test_db.sqlite3`), so two `pytest` runs 
 at the same time break each other; run one at a time. `check_architecture.py` still does not see
 `Reservation(status=…)` followed by `save()`, `bulk_create`, or `update(**{"status": …})`.
 
-**Commit:** branch `c05-review-fixes`, on top of `49e90eb`.
+**Commit:** **`4069177`** on branch `c05-review-fixes`, on top of `49e90eb`. (This line was added by the
+following commit, because a commit cannot name its own hash.)
