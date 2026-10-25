@@ -370,3 +370,48 @@ at the same time break each other; run one at a time. `check_architecture.py` st
 
 **Commit:** **`4069177`** on branch `c05-review-fixes`, on top of `49e90eb`. (This line was added by the
 following commit, because a commit cannot name its own hash.)
+
+---
+
+## C06 Internal Evidence Assessment
+
+**Assessed baseline:** commit `51111fa` on `main` (C03 and C05 including the review fixes, on top of tag `v0.2`), assessed by
+team **Office Reservation System** on 2026-10-22. Their completed form, with our owner disposition
+added, is [c06-assessment-by-office-reservation.md](c06-assessment-by-office-reservation.md). Re-checked
+by us on the same commit (2026-10-25, Python 3.12.14, Django 5.2.18, DRF 3.18.3): `pytest` → **80
+passed**; `python scripts/check_architecture.py` → rules hold.
+
+**Verified findings:** the assessors recorded two as VERIFIED (F1, F3) and one as REJECTED CANDIDATE (F2):
+- **F1** — architecture rules are validated automatically (`scripts/check_architecture.py`,
+  `tests/test_architecture.py`). A confirmation of conformance, not a defect.
+- **F2** — no CI pipeline (they rejected it themselves).
+- **F3** — dependencies may not be pinned. Their own verification line says this still "needs to be
+  checked"; the content of `requirements.txt` was not inspected.
+
+**Owner disposition:**
+
+| Finding | Disposition | Reason / evidence |
+|---|---|---|
+| F1 | ACCEPTED — no immediate change | Reason: it describes conformance, not a defect, so there is nothing to change. True as stated: on `51111fa` the checker reports "Architecture rules hold" and `test_architecture.py` gives 11 passed. Nothing to change. |
+| F2 | REJECTED | No C01–C05 assignment asked for CI, and the C06 assignment lists "has no CI pipeline" among things that are not findings. |
+| F3 | REJECTED | The observation is literally true: `requirements.txt` has no exact pins, only compatible-release `~=` (`Django~=5.2` = ≥5.2,<6.0, likewise DRF, pytest, pytest-django). Rejected because a reproducible environment was not required by C01–C05: C01 offered it only as spike C "Reproducible build/config" (`tasks/C01.txt:132`) and the team chose spike A (Persistence). The finding was also not technically verified (their verification says the pinning still "needs to be checked"). Exact versions are recorded with many results (e.g. line 27 here; the 2026-10-21 rows of L1 in architecture-and-decisions.md). |
+
+**Actions / justified no-change decisions:** no code or document change follows from F1–F3; the reasons
+are in the table. Two remarks on the checklist itself, recorded so the YES answers are not read as
+stronger evidence than they are:
+- **Q1–Q3 (C04)** are answered YES for a quality concern the assessors chose themselves
+  (concurrency). C04 did not take place for our seminar group (public holiday on the seminar day), so
+  no quality concern, criterion or measurement was ever set; the correct answer is **N/A**. The
+  concurrency behaviour they point to is REQ-04, verified under C03 (`tests/test_concurrency.py`).
+- Most other YES answers rest on the presence of files rather than an inspected code path or a run, so
+  we do not count them as additional verification beyond what this file records.
+
+**Remaining evidence gaps** (known to us; none was raised by the assessment):
+- REQ-04 holds only within SQLite's 5 s busy timeout; a longer-held write lock still ends in `500`.
+- The approval path (REQ-09 re-check of BR-02) is serialised the same way but has no parallel test.
+- `check_architecture.py` does not see `Reservation(status=…)` followed by `save()`, `bulk_create`, or
+  `update(**{"status": …})`.
+- The Notification Service is a logging stub; no transport, retry or dead-letter policy.
+- Expiry has no scheduler; `manage.py expire_pending_approvals` is run by hand (DR-2).
+- The actor is `actor_user_id` in the request body, not authentication (D7, DR-5).
+
