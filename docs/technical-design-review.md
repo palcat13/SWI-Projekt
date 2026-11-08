@@ -167,9 +167,12 @@ most important one: we opened `requirements.txt` and it really has only `~=` ran
 observation is true, but no C01–C05 task required a pinned environment (C01 offered it only as spike C;
 we did spike A), and the assessors had not checked the file. Decision: rejected candidate, no change;
 the risk of a newer minor version is accepted, we record exact versions with every result, and it goes
-into part B (risk ID `[doplnit]`). None of the three touched the REQ-04 / BR-02 line. The weak spot on
-that line, the Django admin from step 2, we found ourselves: **DEFER**, no code change now, a Security
-risk for part B (risk ID `[doplnit]`), possible fix `readonly_fields` in `ReservationAdmin`.
+into part B as
+[R-02](evidence-and-evolution.md#r-02--a-fresh-install-pulls-different-dependency-versions). None of
+the three touched the REQ-04 / BR-02 line. The weak spot on that line, the Django admin from step 2,
+we found ourselves: **DEFER**, no code change now, a Security risk for part B,
+[R-01](evidence-and-evolution.md#r-01--the-django-admin-edits-reservations-around-the-lifecycle-and-br-02),
+possible fix `readonly_fields` in `ReservationAdmin`.
 
 Sources: [C06 Internal Evidence Assessment](evidence-and-evolution.md#c06-internal-evidence-assessment)
 (the overview table and [F3](evidence-and-evolution.md#f3--dependencies-may-not-be-pinned)) and the

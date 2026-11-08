@@ -476,7 +476,7 @@ decision recorded there ("ACCEPTED — no immediate change"): no change.
   technically verified by its authors. Owner: team (Rent-a-Partner).
 - **Closure evidence:** no change (no-change decision). The residual risk, that a later install may pull
   newer minor versions than the ones recorded, is accepted; it is mitigated only by recording versions
-  with results. Carried into part B (risk register, not yet written) — risk ID `[doplnit]`.
+  with results. Carried into part B as [R-02](#r-02--a-fresh-install-pulls-different-dependency-versions).
 
 ### Own observation (not raised by C06) — the Django admin bypasses the Lifecycle and BR-02
 
@@ -491,10 +491,14 @@ on the REQ-04 / BR-02 line be backed by a conclusion and an action.
   `ReservationAdmin.get_form(...).base_fields` in `manage.py shell`), and it saves through generic
   `ModelForm` code, bypassing the Lifecycle and the BR-02 check. `check_architecture.py` cannot see it.
 - **Disposition:** **DEFER — no code change at the reporting baseline**, carried into part B as a
-  Security / Privacy risk (risk register, not yet written) — risk ID `[doplnit]`. Owner: `[doplnit]`.
+  Security / Privacy risk —
+  [R-01](#r-01--the-django-admin-edits-reservations-around-the-lifecycle-and-br-02). Owner: `[doplnit]`.
 - **Trigger:** any real admin/staff user, or any data edited via `/admin/`.
 - **Candidate action:** `readonly_fields` for `status`, `start_at`, `end_at`, `approval_deadline` in
-  `ReservationAdmin`.
+  `ReservationAdmin`. *(Superseded 2026-11-08 by the
+  [R-01 treatment](#r-01--the-django-admin-edits-reservations-around-the-lifecycle-and-br-02): the form also
+  offers `companion`, `approval_requested_at` and `decided_by`, and the add view creates a reservation
+  with any of them, so the treatment adds these three fields and `has_add_permission` → `False`.)*
 - **Status:** **NOT VERIFIED** — no mitigation exists, so nothing is verified as closed.
 
 **Actions / justified no-change decisions:** no code or document change follows from F1–F3; the reasons
@@ -510,15 +514,209 @@ stronger evidence than they are:
 
 **Remaining evidence gaps** (known to us; none was raised by the assessment):
 - REQ-04 holds only within SQLite's 5 s busy timeout; a longer-held write lock still ends in `500`.
-  **NOT VERIFIED** — not tested.
+  **NOT VERIFIED** — not tested. → [R-03](#r-03--req-04-is-verified-only-within-the-tested-limits)
 - The approval path (REQ-09 re-check of BR-02) is serialised the same way but has no parallel test.
-  **NOT VERIFIED** under concurrency (reasoned from the code, not measured).
+  **NOT VERIFIED** under concurrency (reasoned from the code, not measured). → [R-03](#r-03--req-04-is-verified-only-within-the-tested-limits)
 - `check_architecture.py` does not see `Reservation(status=…)` followed by `save()`, `bulk_create`, or
   `update(**{"status": …})`.
-- The Notification Service is a logging stub; no transport, retry or dead-letter policy.
-- Expiry has no scheduler; `manage.py expire_pending_approvals` is run by hand (DR-2).
-- The actor is `actor_user_id` in the request body, not authentication (D7, DR-5).
+- The Notification Service is a logging stub; no transport, retry or dead-letter policy. → known limit
+  [K-1](#known-design-limits-facts-not-assumptions)
+- Expiry has no scheduler; `manage.py expire_pending_approvals` is run by hand (DR-2). → known limit
+  [K-2](#known-design-limits-facts-not-assumptions)
+- The actor is `actor_user_id` in the request body, not authentication (D7, DR-5). → assumption
+  [A-3](#assumptions)
 - The Django admin (`/admin/`, `src/reservations/admin.py:12`) edits `status`, the interval and
   `approval_deadline` directly, bypassing the lifecycle and BR-02 (ADR-01, accepted negative
-  consequence 2). `check_architecture.py` does not cover it. **NOT VERIFIED** (no mitigation) — see
-  [Own observation](#own-observation-not-raised-by-c06--the-django-admin-bypasses-the-lifecycle-and-br-02).
+  consequence 2). It can also change `companion` and add new reservations (checked 2026-11-08, see
+  R-01). `check_architecture.py` does not cover it. **NOT VERIFIED** (no mitigation) — see
+  [Own observation](#own-observation-not-raised-by-c06--the-django-admin-bypasses-the-lifecycle-and-br-02)
+  and [R-01](#r-01--the-django-admin-edits-reservations-around-the-lifecycle-and-br-02).
+
+## C07–C08 Risk Assessment (part B)
+
+**Reporting baseline:** tag `c08-review` = commit `c5d90d9` on `main`, 2026-11-08 — the same baseline as
+part A ([technical-design-review.md](technical-design-review.md#reporting-baseline)). `git diff --stat
+51111fa c08-review -- src scripts requirements.txt pytest.ini` lists only the new `scripts/demo_c08.sh`,
+so the code, the tests and the dependency list are the ones C06 assessed. The commands recorded
+[below](#commands-run-for-this-section) were run on 2026-11-08 from the repository root on a clean tree
+at `c5d90d9`, one pytest process at a time; the incident in [I-01](#issues-already-happened) happened
+outside them.
+
+**Naming:** R-01 … R-04 here are risks. They are not the system responsibilities R-1 … R-7 in
+[C2](architecture-and-decisions.md#c2--system-responsibilities).
+
+**Classification** (assignment B3–B4). Likelihood **L** and impact **I** are each 1 (low), 2 (medium)
+or 3 (high). Priority = L × I: **1–2 LOW, 3–4 MEDIUM, 6–9 HIGH**. Initial = before the treatment;
+expected residual = after the planned treatment; actual residual = only after the treatment exists
+and a run shows it works. Where it does not, the actual residual is **NOT VERIFIED** and keeps the
+initial score. Owners, due dates and acceptance owners are not decided yet and are marked `[doplnit]`.
+
+| ID | Category | Initial | Strategy | Actual residual |
+|---|---|---|---|---|
+| [R-01](#r-01--the-django-admin-edits-reservations-around-the-lifecycle-and-br-02) | Security / Privacy | L=1, I=3 → MEDIUM (3) | MITIGATE | **NOT VERIFIED** — stays MEDIUM (3) |
+| [R-02](#r-02--a-fresh-install-pulls-different-dependency-versions) | Release / Operation | L=1, I=2 → LOW (2) | ACCEPT | LOW (2), unchanged |
+| [R-03](#r-03--req-04-is-verified-only-within-the-tested-limits) | Technical / Quality | L=3, I=3 → HIGH (9) | MITIGATE | L=1, I=3 → MEDIUM (3), partly verified |
+| [R-04](#r-04--a-two-person-team-carries-the-scope-of-a-larger-team) | People / Resources | L=2, I=2 → MEDIUM (4) | MITIGATE | **NOT VERIFIED** — stays MEDIUM (4) |
+
+### R-01 — The Django admin edits reservations around the Lifecycle and BR-02
+
+| Item | Record |
+|---|---|
+| **ID & statement** | **R-01:** the admin at `/admin/` lets a staff user add or change a reservation with any `status`, `companion` and interval → the save skips the Lifecycle and the BR-02 check → overlapping blocking reservations (or a state the statechart forbids) are stored without any error, so BR-02 no longer holds in the data |
+| **Category** | Security / Privacy — an admin permission wider than the domain rules allow |
+| **Initial L/I / priority** | **L=1, I=3 → MEDIUM (3).** The path exists: `/admin/` is mounted (`src/config/urls.py:5`) and `ReservationAdmin` (`src/reservations/admin.py:12`) is a plain `ModelAdmin`. Checked today on `c5d90d9`: `get_readonly_fields()` → `()`; `has_add_permission` → `True`; the add form and the change form both offer `activity`, `approval_deadline`, `approval_requested_at`, `companion`, `customer`, `decided_by`, `end_at`, `start_at`, `status`. Changing `companion` alone moves a reservation onto another companion's calendar. L: the local development database has one superuser, but the API and the demo never use the admin, there are no real staff users, and a conflict needs a deliberate edit. I: if it happens, BR-02, the main invariant of part A, is broken in the stored data and nothing reports it (`check_architecture.py` reads code, not admin forms). Low likelihood, but the impact is on the core invariant, so it gets a response (B4 note) |
+| **Strategy** | **MITIGATE** — keep the admin (the README documents it), but take away every way it can write the fields that decide BR-02 and the lifecycle. The change is small and local. AVOID (unmount `/admin/`) would also work and is the fallback |
+| **Treatment & owner / due** | In `ReservationAdmin`: `readonly_fields` for `companion`, `start_at`, `end_at`, `status`, `approval_deadline`, `approval_requested_at`, `decided_by`, and `has_add_permission` returning `False` (with `start_at`/`end_at`/`companion` read-only, the add form could not fill these NOT NULL fields and would fail anyway). A test covers both views: the change form offers none of these fields, and the add view is refused. Owner: `[doplnit]`; due: `[doplnit]` |
+| **Treatment evidence** | None yet — no code change on `c08-review`. Expected evidence: the new test in `src/reservations/tests/` and a passing `pytest` |
+| **Expected residual** | L=1, I=1 → LOW (1): through the admin a reservation can then only be deleted, or have `activity` / `customer` edited; none of this can create an overlap or a forbidden state. Writes through `manage.py shell` or straight into the database stay possible (ADR-01, accepted consequence 2), but only for developers |
+| **Actual residual** | **NOT VERIFIED** — the treatment does not exist; stays L=1, I=3 → MEDIUM (3) |
+| **Acceptance & contingency** | Until the fix, the risk is accepted for the defence; acceptance owner: `[doplnit]`. Contingency: do not add or change reservations through `/admin/` in the demo; if a row was edited there, treat the local database as untrusted and recreate it (`src/db.sqlite3` is local; `*.sqlite3` is in `.gitignore`) |
+| **Monitoring / trigger** | Trigger: any real admin/staff user, any data added or edited via `/admin/`, any change to `admin.py` or `urls.py`, or a second process with write access to the reservation table (ADR-01 reconsider trigger). Check at each new baseline with the admin command [below](#commands-run-for-this-section) |
+
+### R-02 — A fresh install pulls different dependency versions
+
+| Item | Record |
+|---|---|
+| **ID & statement** | **R-02:** `requirements.txt` has only `~=` ranges and no lock file ([C06 F3](#f3--dependencies-may-not-be-pinned)) → a fresh install before the defence pulls a newer version that changes behaviour → `pytest` or `scripts/demo_c08.sh` fails on that machine and no longer matches the recorded results |
+| **Category** | Release / Operation — reproducible build |
+| **Initial L/I / priority** | **L=1, I=2 → LOW (2).** L: drift is real — a fresh install today resolves Django **5.2.19**, while part A was recorded on 5.2.18 (and the 2026-09-14 run under "Observed result" above on 5.2.17 / DRF 3.18.1). A break is less likely: the ranges stay inside Django 5.2 LTS (`~=5.2` = <6.0), DRF 3.x and pytest 8.x (8.4.2 is the last 8.x; pytest 9 is excluded), and the fresh set passed 80 of 80 today. I: a failing fresh install hits the demo on that machine, but recovery is quick and known (install the recorded exact versions); the existing `.venv` is not affected |
+| **Strategy** | **ACCEPT** — as decided in C06 F3: C01–C05 did not require a reproducible environment, the event is unlikely, and the contingency is ready |
+| **Treatment & owner / due** | No treatment beyond what exists: exact versions are recorded with every result (part A: Python 3.14.7, Django 5.2.18, DRF 3.18.3, pytest 8.4.2; pytest-django 4.14.0, checked today). Optional, not decided: a constraints/lock file with these versions — owner: `[doplnit]`; due: `[doplnit]` |
+| **Treatment evidence** | Fresh-install check, 2026-11-08 (commands [below](#commands-run-for-this-section)): a throwaway venv resolves Python 3.14.7, Django 5.2.19, DRF 3.18.3, pytest 8.4.2, pytest-django 4.14.0, and its pytest run in this checkout gives `80 passed in 13.78s`. This is monitoring, not a mitigation |
+| **Expected residual** | L=1, I=2 → LOW (2) — ACCEPT does not lower the score |
+| **Actual residual** | L=1, I=2 → LOW (2), unchanged. A lock file does not exist, so nothing is claimed for it |
+| **Acceptance & contingency** | Acceptance owner: `[doplnit]` (the C06 F3 disposition was made by the team). Contingency: `.venv/bin/pip install Django==5.2.18 djangorestframework==3.18.3 pytest==8.4.2 pytest-django==4.14.0` (pip 26.2.1 is in `.venv`; with uv: `VIRTUAL_ENV=.venv uv pip install` with the same pins), then run `pytest` again |
+| **Monitoring / trigger** | Before the defence, repeat the fresh-install check. Trigger: a fresh install resolves a new minor version, any test fails on a fresh install, or the demo machine gets a new Python version |
+
+### R-03 — REQ-04 is verified only within the tested limits
+
+| Item | Record |
+|---|---|
+| **ID & statement** | **R-03:** SQLite allows one writer at a time → two requests that write the same companion's calendar at the same time leave the loser with `500` instead of `409 OVERLAP` → REQ-04 is not met |
+| **Category** | Technical / Quality — concurrency, REQ-04, on the current SQLite setup |
+| **Initial L/I / priority** | **L=3, I=3 → HIGH (9)**, before the treatment (2026-10-21). L: measured — with SQLite's default deferred transactions the race gave `200` + `500 database is locked` in 3 of 3 runs per case ([ADR-01 addendum](architecture-and-decisions.md#adr-01-addendum--2026-10-21-sqlite-immediate-transactions)). I: REQ-04 is the accepted claim at the centre of part A; BR-02 itself held (SQLite serialises writers), but the claimed `409 OVERLAP` did not |
+| **Strategy** | **MITIGATE** — serialise the writers and prove it with a real race test |
+| **Treatment & owner / due** | Done (`4069177`, 2026-10-21): `"OPTIONS": {"transaction_mode": "IMMEDIATE"}` (`src/config/settings.py:56`) and `src/reservations/tests/test_concurrency.py` (two threads, real HTTP to a live server, a 0.2 s hold at line 16, oracle at line 86). Still planned, for what the test does not cover: (a) a behaviour change for a lock held longer than SQLite's 5 s busy timeout — map `OperationalError: database is locked` to a defined response (`409`, or `503` with a retry hint) instead of an unhandled `500`, with a test that holds the lock longer than 5 s; (b) a parallel test that races Approve against Confirm on the same slot; (c) a race with more than two requests. Owner: `[doplnit]`; due: `[doplnit]` |
+| **Treatment evidence** | Run today on `c5d90d9`: `test_concurrency.py` → `2 passed in 1.55s` (exit 0), then 5 more runs one after another → `2 passed` each (1.49–1.50 s); whole suite → `80 passed in 13.61s`. Negative control: without `IMMEDIATE` the same test gave `[200, 500]` ([C03/C05 review fixes](#c03c05-review-fixes-2026-10-21)); not repeated on this baseline, because it needs a code change |
+| **Expected residual** | L=1, I=2 → LOW (2), only once (a) exists and passes: then a lock held too long ends in a defined refusal instead of a crash. (b) and (c) only extend the verified scope; they do not change I |
+| **Actual residual** | **L=1, I=3 → MEDIUM (3), partly verified.** L is lowered for the tested path — two racing Confirms, direct and with approval — because the treatment exists and the race test passes (6 of 6 runs today; it failed without the treatment). I stays 3, because the consequence when it does happen (REQ-04 broken, `500` instead of `409`) is the same. The busy-timeout case, Approve under concurrency and more than two writers are **NOT VERIFIED**; that is why this is only partly verified |
+| **Acceptance & contingency** | The MEDIUM residual is accepted for the CP1 defence; acceptance owner: `[doplnit]`. Reason: the demo has one user (assumption A-1) and a confirmation transaction holds the lock for milliseconds, far below 5 s. Contingency: a failing race test is a trigger, not something to re-run until it passes — stop claiming REQ-04 as verified, record an issue in this file, and update the part A / part C status |
+| **Monitoring / trigger** | Trigger: `test_concurrency.py` fails; a `500` with `database is locked` appears; `DATABASES` in `settings.py` changes; ADR-01 reconsider triggers (more than one concurrent user or a load test with overlapping confirmations, a second process writing the reservation table). A move to PostgreSQL: `transaction_mode` is SQLite-only, and without `select_for_update()` or the exclusion constraint both racing requests could win — a real double booking (ADR-01 addendum); then this risk must be assessed again |
+
+### R-04 — A two-person team carries the scope of a larger team
+
+| Item | Record |
+|---|---|
+| **ID & statement** | **R-04:** the team has two members, while the other teams in the seminar group have three or four, and the assignments expect the same outputs from every team → the remaining work does not fit into the time before CP2 → actions slip or get done with less verification than planned |
+| **Category** | People / Resources — team capacity |
+| **Initial L/I / priority** | **L=2, I=2 → MEDIUM (4).** L: the scope is per team, not per person (C07–C08 asks every team for parts A, B and C), and the open work is real: the R-01 fix, step (a) of R-03, part C (status report) and the CP2 work, all with owners and dates still to be set. It is a realistic possibility, not a sure thing, because the core of the system and its evidence already exist. I: a delay or a narrower verification hurts schedule and quality, but recovery is realistic — the 80 automated tests, `scripts/check_architecture.py` and `scripts/demo_c08.sh` repeat the main checks with one command each |
+| **Strategy** | **MITIGATE** — spend the limited capacity where the risk is highest and keep checks automatic |
+| **Treatment & owner / due** | (1) Order the open actions by risk priority from this register (R-01 and R-03 (a) first) and do not add features beyond the C01–C05 obligations. (2) Keep every claim backed by a test or a script, so that re-checking costs no extra people. (3) Before CP2, write a short work plan with owners and dates (part C, slide 03). Owner: `[doplnit]`; due: `[doplnit]` |
+| **Treatment evidence** | (2) exists: `pytest` → 80 passed, `check_architecture.py` → rules hold, `scripts/demo_c08.sh` → exit 0 (part A reporting baseline). (1) and (3) do not exist yet |
+| **Expected residual** | L=1, I=2 → LOW (2), once the work plan exists and the high-priority actions are done by their dates |
+| **Actual residual** | **NOT VERIFIED** — no work plan and no completed action yet; stays L=2, I=2 → MEDIUM (4) |
+| **Acceptance & contingency** | Acceptance owner: `[doplnit]`. Contingency: if an action cannot be done in time, narrow it openly — keep the risk at its current score, mark the claim NOT VERIFIED and report it in part C, rather than present it as done |
+| **Monitoring / trigger** | Review at every seminar. Trigger: an action misses its due date, new mandatory scope arrives (CP2), or one member is unavailable for a longer time |
+
+### Issues (already happened)
+
+- **I-01 — The test database is one shared file.** `TEST.NAME` is `src/test_db.sqlite3`
+  (`src/config/settings.py:58`), so two pytest processes in the same checkout break each other. Expected
+  since 2026-10-21 ([C03/C05 review fixes](#c03c05-review-fixes-2026-10-21), "Remaining risk"). It
+  happened on 2026-11-08 during a parallel run of agents, outside the commands recorded in this section:
+  two pytest processes ran in this checkout at the same time and one failed with `attempt to write a
+  readonly database`. Not reproduced on purpose (it needs that parallel run). Not a nonconformity with
+  C01–C05: no claim covers parallel test runs, and the file is needed for the REQ-04 race test (ADR-01
+  addendum). Workaround: one pytest at a time (part A states this; `scripts/demo_c08.sh` runs its pytest
+  calls one after another). Possible fix: a per-process test database name, which needs a change in
+  `settings.py`. Owner: `[doplnit]`. **Open.**
+- **No open proven defect against C01–C05.** Checked today on `c5d90d9`: `pytest` → 80 passed,
+  `check_architecture.py` → rules hold; C06 raised no nonconformity
+  (see [above](#c06-internal-evidence-assessment)). The items in "Remaining evidence gaps" are missing evidence (NOT VERIFIED), not reproduced failures.
+  The admin path ([R-01](#r-01--the-django-admin-edits-reservations-around-the-lifecycle-and-br-02))
+  exists, but no conflicting reservation has been made through it, and ADR-01 accepted it as a known
+  consequence, so it is kept as a risk. If the team decides that BR-02 must hold for the admin too, it
+  becomes a defect.
+
+### Assumptions
+
+- **A-1** — The demo has one user at a time and there are no concurrent real users (basis of ADR-01 and
+  of accepting R-03). If it stops being true, the ADR-01 reconsider triggers apply.
+- **A-2** — The demo runs on a machine with the recorded environment and an installed `.venv` (R-02). Which machine: `[doplnit]`.
+- **A-3** — The API is reached only from the same machine, so the missing authentication (D6) and the
+  actor in the request body (D7) are accepted CP1 scope, not a risk. Basis: `manage.py runserver`
+  without an address binds to `127.0.0.1:8000` (`Command.default_addr` = `127.0.0.1`; the README runs it
+  that way), and `scripts/demo_c02.sh` binds `127.0.0.1` explicitly. `ALLOWED_HOSTS` (default
+  `localhost,127.0.0.1`, `src/config/settings.py:8`) only adds a check of the `Host` header; it does not
+  decide where the server listens. It becomes a Security risk as soon as the API is reachable by others
+  (DR-5).
+
+### Known design limits (facts, not assumptions)
+
+- **K-1** — The Notification Service is a logging stub (`src/reservations/notifications.py:20`), so no
+  external service is involved in the demo. Transport, retry and dead-letter policy are out of CP1 scope.
+- **K-2** — Expiry has no scheduler, and this does not break BR-02: a pending request stops blocking at
+  its deadline because the blocking query checks the deadline at read time (`policy.live_q(now)`,
+  `src/reservations/availability.py:25`). Until someone runs `manage.py expire_pending_approvals`, the
+  stored status of an overdue request is still `PENDING_APPROVAL` (DR-2).
+
+### Commands run for this section
+
+2026-11-08, repository root, `c5d90d9`, clean tree, one pytest process at a time. The fresh venv was
+created in a scratch directory outside the repository; `mktemp -d` stands in for that path here.
+
+```text
+$ .venv/bin/python -m pytest -q src/reservations/tests/test_concurrency.py
+..                                                                       [100%]
+2 passed in 1.55s                                                        (exit 0)
+
+$ for i in 1 2 3 4 5; do .venv/bin/python -m pytest -q -p no:cacheprovider src/reservations/tests/test_concurrency.py | tail -1; done
+2 passed in 1.50s
+2 passed in 1.49s
+2 passed in 1.49s
+2 passed in 1.49s
+2 passed in 1.49s
+
+$ .venv/bin/python -m pytest -q
+80 passed in 13.61s                                                      (exit 0)
+
+$ .venv/bin/python scripts/check_architecture.py
+Architecture rules hold: Reservation.status is written only by lifecycle.py,
+and no domain module depends on the web framework.                       (exit 0)
+
+$ .venv/bin/python -c "import sys, django, rest_framework, pytest, pytest_django; print(sys.version.split()[0], django.__version__, rest_framework.__version__, pytest.__version__, pytest_django.__version__)"
+3.14.7 5.2.18 3.18.3 8.4.2 4.14.0
+
+$ FRESH="$(mktemp -d)/venv"
+$ uv venv -q -p /usr/bin/python3 "$FRESH"
+$ VIRTUAL_ENV="$FRESH" uv pip install -q -r requirements.txt
+$ "$FRESH/bin/python" -c "import sys, django, rest_framework, pytest, pytest_django; print(sys.version.split()[0], django.__version__, rest_framework.__version__, pytest.__version__, pytest_django.__version__)"
+3.14.7 5.2.19 3.18.3 8.4.2 4.14.0
+$ "$FRESH/bin/python" -m pytest -q -p no:cacheprovider
+80 passed in 13.78s                                                      (exit 0)
+
+$ cd src && ../.venv/bin/python manage.py shell -c "
+from django.contrib import admin
+from django.contrib.auth.models import User
+from django.test import RequestFactory
+from reservations.models import Reservation
+ma = admin.site._registry[Reservation]
+r = RequestFactory().get('/admin/'); r.user = User.objects.filter(is_superuser=True).first()
+obj = Reservation.objects.first()
+print('readonly', ma.get_readonly_fields(r), 'add_perm', ma.has_add_permission(r))
+print('add form', sorted(ma.get_form(r).base_fields))
+print('change form', sorted(ma.get_form(r, obj, change=True).base_fields))"
+8 objects imported automatically (use -v 2 for details).
+
+readonly () add_perm True
+add form ['activity', 'approval_deadline', 'approval_requested_at', 'companion', 'customer', 'decided_by', 'end_at', 'start_at', 'status']
+change form ['activity', 'approval_deadline', 'approval_requested_at', 'companion', 'customer', 'decided_by', 'end_at', 'start_at', 'status']
+
+$ .venv/bin/python -c "from django.core.management.commands.runserver import Command; print(Command.default_addr, Command.default_port)"
+127.0.0.1 8000
+
+$ git diff --stat 51111fa c08-review -- src scripts requirements.txt pytest.ini
+ scripts/demo_c08.sh | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+```
