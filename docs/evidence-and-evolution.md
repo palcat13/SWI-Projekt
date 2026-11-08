@@ -381,23 +381,125 @@ added, is [c06-assessment-by-office-reservation.md](c06-assessment-by-office-res
 by us on the same commit (2026-10-25, Python 3.12.14, Django 5.2.18, DRF 3.18.3): `pytest` → **80
 passed**; `python scripts/check_architecture.py` → rules hold.
 
-**Verified findings:** the assessors recorded two as VERIFIED (F1, F3) and one as REJECTED CANDIDATE (F2):
+**Verification baseline for the commands below:** `main` at HEAD `093d516` (2026-11-08). `git diff --stat
+51111fa HEAD -- src scripts/check_architecture.py requirements.txt pytest.ini` is empty, so the code and
+tests under `src/`, the architecture checker, the dependency list and the pytest configuration are
+unchanged since the assessed commit. Commands were run from the repository root with `.venv/bin/python`.
+
+**Candidates raised:** the assessors recorded two as VERIFIED (F1, F3) and one as REJECTED CANDIDATE (F2):
 - **F1** — architecture rules are validated automatically (`scripts/check_architecture.py`,
-  `tests/test_architecture.py`). A confirmation of conformance, not a defect.
+  `tests/test_architecture.py`). A confirmation of conformance, not a nonconformity.
 - **F2** — no CI pipeline (they rejected it themselves).
 - **F3** — dependencies may not be pinned. Their own verification line says this still "needs to be
   checked"; the content of `requirements.txt` was not inspected.
 
-**Owner disposition:**
+**Owner disposition (overview).** Criterion, from the C07–C08 assignment ("Defect / Finding = a proven
+nonconformity with an accepted claim", `tasks/C07-C08.txt:115`): a **VERIFIED FINDING** is a reproduced
+nonconformity with a C01–C05 claim on baseline `51111fa`; anything else is a **REJECTED CANDIDATE**. The
+assessors marked F1 and F3 VERIFIED because the observations are true; we differ because neither
+observation contradicts a C01–C05 claim (F1 confirms conformance, F3 concerns a property C01–C05 never
+claimed).
 
-| Finding | Disposition | Reason / evidence |
-|---|---|---|
-| F1 | ACCEPTED — no immediate change | Reason: it describes conformance, not a defect, so there is nothing to change. True as stated: on `51111fa` the checker reports "Architecture rules hold" and `test_architecture.py` gives 11 passed. Nothing to change. |
-| F2 | REJECTED | No C01–C05 assignment asked for CI, and the C06 assignment lists "has no CI pipeline" among things that are not findings. |
-| F3 | REJECTED | The observation is literally true: `requirements.txt` has no exact pins, only compatible-release `~=` (`Django~=5.2` = ≥5.2,<6.0, likewise DRF, pytest, pytest-django). Rejected because a reproducible environment was not required by C01–C05: C01 offered it only as spike C "Reproducible build/config" (`tasks/C01.txt:132`) and the team chose spike A (Persistence). The finding was also not technically verified (their verification says the pinning still "needs to be checked"). Exact versions are recorded with many results (e.g. line 27 here; the 2026-10-21 rows of L1 in architecture-and-decisions.md). |
+| Finding | Assessors' result | Our verdict | Disposition | Reason |
+|---|---|---|---|---|
+| F1 | VERIFIED FINDING | REJECTED CANDIDATE (true observation, conformance, not a nonconformity) | ACCEPT observation — no change | True and reproduced, but it confirms conformance, so there is nothing to fix → [F1](#f1--architecture-is-validated-automatically) |
+| F2 | REJECTED CANDIDATE | REJECTED CANDIDATE | REJECT — no change | No C01–C05 assignment asked for CI, and C06 lists "has no CI pipeline" among non-findings → [F2](#f2--no-ci-pipeline) |
+| F3 | VERIFIED FINDING | REJECTED CANDIDATE (true observation, no C01–C05 claim violated) | REJECT — no change | `requirements.txt` has only `~=` constraints, but no C01–C05 claim requires a pinned, reproducible environment → [F3](#f3--dependencies-may-not-be-pinned) |
+
+Owner for all three: team (Rent-a-Partner). The ACCEPTED / REJECTED column of the C06 form
+([Owner disposition](c06-assessment-by-office-reservation.md#owner-disposition)) means ACCEPT / REJECT
+here; for F1 the reclassification from VERIFIED FINDING to REJECTED CANDIDATE does not change the
+decision recorded there ("ACCEPTED — no immediate change"): no change.
+
+### F1 — Architecture is validated automatically
+
+- **Claim:** none of C01–C05 is contradicted. The finding asserts that the architecture rules (C03) are
+  checked automatically; it is a confirmation of conformance, not a claim that something fails.
+- **Expected:** the repository keeps to the architectural boundaries (`Reservation.status` written only by
+  `lifecycle.py`; no domain module depends on the web framework).
+- **Observed:** `scripts/check_architecture.py` and `src/reservations/tests/test_architecture.py` exist and
+  enforce those rules. Run on `main` (HEAD `093d516`, `src/` and the checker unchanged since `51111fa`):
+  - `.venv/bin/python scripts/check_architecture.py` → `Architecture rules hold: Reservation.status is written only by lifecycle.py, and no domain module depends on the web framework.` (exit 0)
+  - `.venv/bin/python -m pytest -q src/reservations/tests/test_architecture.py` → `11 passed in 0.02s` (exit 0)
+- **Verify:** both commands above, on `main` (HEAD `093d516`), code and checker identical to `51111fa`
+  (empty `git diff --stat 51111fa HEAD -- src scripts/check_architecture.py requirements.txt pytest.ini`).
+  Same result as on `51111fa` (checker holds, 11 passed).
+- **Disposition:** assessors VERIFIED FINDING; ours **REJECTED CANDIDATE (true observation, conformance,
+  not a nonconformity)**, by the same criterion as F3: a finding is a proven nonconformity with an
+  accepted claim, and F1 proves conformance. **ACCEPT observation — no change.** Reason: the statement
+  is true and describes conformance, so there is nothing to fix. The C06 form records F1 as "ACCEPTED —
+  no immediate change"; the reclassification does not change that decision. Owner: team (Rent-a-Partner).
+- **Closure evidence:** no change needed. The evidence is the checker output and the 11 passing tests
+  above. Limits of the checker (what it does not see) are listed under "Remaining evidence gaps".
+
+### F2 — No CI pipeline
+
+- **Claim:** none of C01–C05 is contradicted. The finding says tests are not run by a CI/CD pipeline; no
+  C01–C05 requirement or claim promised one.
+- **Expected (assessors):** a CI configuration file (e.g. `.github/workflows/` or `.gitlab-ci.yml`).
+- **Observed:** no CI configuration in the repository. Run on `main` (HEAD `093d516`):
+  - `ls .github .gitlab-ci.yml 2>&1` → `ls: cannot access '.github': No such file or directory` and
+    `ls: cannot access '.gitlab-ci.yml': No such file or directory`
+- **Verify:** the `ls` above on `main` (HEAD `093d516`); the assessors checked the tree of `51111fa`.
+  The observation is true, but it is not a defect against C01–C05, and the C06 assignment explicitly lists
+  "has no CI pipeline" among things that are not findings.
+- **Disposition:** assessors REJECTED CANDIDATE ("can be set up later"); ours REJECTED CANDIDATE.
+  **REJECT.** Reason: no C01–C05 assignment asked for CI. Owner: team (Rent-a-Partner).
+- **Closure evidence:** no change (no-change decision). Tests are run by hand (`pytest`); nothing is
+  claimed about automated runs.
+
+### F3 — Dependencies may not be pinned
+
+- **Claim:** none of C01–C05 is contradicted. The finding asserts a reproducible environment; C01–C05 did
+  not require one. C01 offered it only as spike C "Reproducible build/config" (`tasks/C01.txt:132`), and
+  the team chose spike A (Persistence).
+- **Expected (assessors):** exact pinned versions in `requirements.txt`.
+- **Observed:** `requirements.txt` exists but has only compatible-release `~=` constraints. Run on `main`
+  (HEAD `093d516`):
+  - `cat requirements.txt` →
+    ```text
+    Django~=5.2
+    djangorestframework~=3.16
+    pytest~=8.3
+    pytest-django~=4.11
+    ```
+    i.e. `Django~=5.2` = ≥5.2,<6.0, likewise DRF, pytest, pytest-django; no exact pins, no lock file.
+- **Verify:** `cat requirements.txt` above. The factual statement is true. The assessors' own verification
+  line says the pinning "needs to be checked" and the content of `requirements.txt` was not inspected, so
+  they recorded VERIFIED without verifying it; we did. Exact versions are recorded with many results (e.g.
+  line 27 here: Django 5.2.17 / DRF 3.18.1; the 2026-10-21 rows of L1 in architecture-and-decisions.md:
+  Django 5.2.18 / DRF 3.18.3); on `51111fa` re-checked 2026-10-25 with Django 5.2.18, DRF 3.18.3:
+  `pytest` → 80 passed.
+- **Disposition:** assessors VERIFIED FINDING (their own line says "needs to be checked"); ours: the
+  observation is factually true but it is not a violation of any C01–C05 claim, so REJECTED CANDIDATE.
+  **REJECT.** Reason: a reproducible environment was not required by C01–C05, and the finding was not
+  technically verified by its authors. Owner: team (Rent-a-Partner).
+- **Closure evidence:** no change (no-change decision). The residual risk, that a later install may pull
+  newer minor versions than the ones recorded, is accepted; it is mitigated only by recording versions
+  with results. Carried into part B (risk register, not yet written) — risk ID `[doplnit]`.
+
+### Own observation (not raised by C06) — the Django admin bypasses the Lifecycle and BR-02
+
+Not a C06 finding; recorded because the C07–C08 assignment asks that an unprotected admin/approval path
+on the REQ-04 / BR-02 line be backed by a conclusion and an action.
+- **Claim:** BR-02 / REQ-04 hold for the API paths only (Confirm, Approve through the Reservation
+  Lifecycle); ADR-01 accepts that nothing outside the application protects BR-02 (accepted negative
+  consequence 2).
+- **Observed:** `/admin/` is mounted in `src/config/urls.py:5`, and `src/reservations/admin.py:12`
+  `ReservationAdmin` is a plain `ModelAdmin` with no `readonly_fields`. Its form offers `status`,
+  `start_at`, `end_at` and `approval_deadline` for editing (checked 2026-11-08 on HEAD `093d516` with
+  `ReservationAdmin.get_form(...).base_fields` in `manage.py shell`), and it saves through generic
+  `ModelForm` code, bypassing the Lifecycle and the BR-02 check. `check_architecture.py` cannot see it.
+- **Disposition:** **DEFER — no code change at the reporting baseline**, carried into part B as a
+  Security / Privacy risk (risk register, not yet written) — risk ID `[doplnit]`. Owner: `[doplnit]`.
+- **Trigger:** any real admin/staff user, or any data edited via `/admin/`.
+- **Candidate action:** `readonly_fields` for `status`, `start_at`, `end_at`, `approval_deadline` in
+  `ReservationAdmin`.
+- **Status:** **NOT VERIFIED** — no mitigation exists, so nothing is verified as closed.
 
 **Actions / justified no-change decisions:** no code or document change follows from F1–F3; the reasons
-are in the table. Two remarks on the checklist itself, recorded so the YES answers are not read as
+are above. No C06 finding was fixed in code; none is a nonconformity (see the criterion above the
+overview table). Two remarks on the checklist itself, recorded so the YES answers are not read as
 stronger evidence than they are:
 - **Q1–Q3 (C04)** are answered YES for a quality concern the assessors chose themselves
   (concurrency). C04 did not take place for our seminar group (public holiday on the seminar day), so
@@ -408,10 +510,15 @@ stronger evidence than they are:
 
 **Remaining evidence gaps** (known to us; none was raised by the assessment):
 - REQ-04 holds only within SQLite's 5 s busy timeout; a longer-held write lock still ends in `500`.
+  **NOT VERIFIED** — not tested.
 - The approval path (REQ-09 re-check of BR-02) is serialised the same way but has no parallel test.
+  **NOT VERIFIED** under concurrency (reasoned from the code, not measured).
 - `check_architecture.py` does not see `Reservation(status=…)` followed by `save()`, `bulk_create`, or
   `update(**{"status": …})`.
 - The Notification Service is a logging stub; no transport, retry or dead-letter policy.
 - Expiry has no scheduler; `manage.py expire_pending_approvals` is run by hand (DR-2).
 - The actor is `actor_user_id` in the request body, not authentication (D7, DR-5).
-
+- The Django admin (`/admin/`, `src/reservations/admin.py:12`) edits `status`, the interval and
+  `approval_deadline` directly, bypassing the lifecycle and BR-02 (ADR-01, accepted negative
+  consequence 2). `check_architecture.py` does not cover it. **NOT VERIFIED** (no mitigation) — see
+  [Own observation](#own-observation-not-raised-by-c06--the-django-admin-bypasses-the-lifecycle-and-br-02).

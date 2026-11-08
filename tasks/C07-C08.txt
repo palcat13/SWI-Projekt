@@ -1,0 +1,267 @@
+SWI · Cvičení C07–C08 — Project assessment, risk and reviews
+Jeden rezervační systém · C06 baseline + aktuální reporting baseline · CP1 · 20 bodů
+
+Pracujete nad vlastním projektem z C01–C05 a výsledky nezávislého assessmentu z C06. Nezačínejte
+nový projekt a nevyrábějte další izolovanou dokumentaci. Každé tvrzení o dokončení, návrhu nebo
+ověření musí mít odkaz na konkrétní verzi, soubor, test či pozorování.
+
+Dvě verze, dvě různé role: Nálezy reprodukujte vůči původní C06 assessed baseline (její commit/tag
+zůstává dohledatelný). Opravy a aktuální projektový stav ukazujte vůči novému reporting
+commitu/tagu. Části A a C musí vykazovat stejný aktuální stav; u opravených nálezů uveďte odkaz ze
+staré verze na novou.
+
+  >> Organizace práce: Dnes projděte findings z C06, ověřte je a rozhodněte o jejich vypořádání.
+  >> Na příští cvičení připravte A – Technical Design Review, B – Risk Assessment a C – Project
+  >> Status Report. A a C jsou dva různé pohledy na stejný projekt: technická obhajoba a řízení
+  >> stavu. B dodává podklady pro C. CP1 se hodnotí jen jednou, max. 20 bodů.
+
+--------------------------------------------------------------------------------
+Dnes: C06 assessment findings → ověřené rozhodnutí
+
+Vstup: C06 assessment cizího týmu, vaše hodnocená baseline (commit/tag), dokumentace, kód a testy.
+C06 posuzovalo pouze skutečné povinnosti C01–C05; nepřidávejte nové požadavky, nepřijímejte
+připomínku jen proto, že hodnotitel preferuje jinou technologii.
+
+Postup pro každý významný candidate finding
+  1. Claim: jaké konkrétní tvrzení nebo požadavek z C01–C05 údajně neplatí? Uveďte jeho ID nebo
+     místo v dokumentaci.
+  2. Expected: co podle přijaté specifikace, návrhu či zadání mělo nastat?
+  3. Observed: co hodnotitel skutečně našel? Přiložte cestu k souboru, test, log nebo postup
+     reprodukce.
+  4. Verify: potvrďte nález na identifikované baseline; pokud jde jen o výklad, porovnejte
+     relevantní artefakty.
+  5. Disposition: VERIFIED FINDING / REJECTED CANDIDATE; pak ACCEPT / REJECT / DEFER s důvodem,
+     vlastníkem a action nebo no-change.
+  6. Closure evidence: pokud jste opravili, ukažte změnu v repozitáři a test/review; pokud ne,
+     označte jako otevřený issue nebo riziko, nikoli jako vyřešené.
+
+  | C06 položka | Očekávaný záznam | Příklad |
+  |---|---|---|
+  | ID + claim | Co přesně je napadeno | R4: Confirm musí zachovat BR-02 |
+  | Expected ↔ Observed | Rozdíl v chování nebo evidenci | Expected: konflikt odmítnut; observed: oba CONFIRMED |
+  | Evidence | Commit/tag + konkrétní soubor/test | abc123, test ConfirmRaceTest |
+  | Decision | Přijato / odmítnuto / odloženo + proč | ACCEPT, reprodukováno |
+  | Action + owner | Oprava, důkaz uzavření, termín | Změnit consistency boundary, doplnit test |
+
+Výstup dnes: souhrn maximálně tří nejdůležitějších ověřených nálezů, jejich disposition, akce
+a otevřené problémy. Výsledek patří do docs/evidence-and-evolution.md nebo existujícího C06
+assessmentu s odkazy. Pokud na výsledek nemáte důkaz, označte jej NOT VERIFIED.
+
+--------------------------------------------------------------------------------
+A. Technical Design Review – na příští cvičení
+
+Účel: přesvědčivě ukázat jednu konzistentní cestu od požadavku a rozhodnutí až k implementaci,
+verifikaci a reakci na nezávislý assessment. Nejde o soutěž množství slidů; prezentujte skutečně
+hotové technické výsledky a přiznejte omezení.
+
+Forma: přibližně 8–10 min prezentace a technické dotazy; stačí otevřený repozitář, existující
+diagramy, běžící aplikace/testy nebo stručné podpůrné slidy. Nevyžaduje se nový rozsáhlý deck.
+
+  | Krok | Co přesně ukázat | Co je přesvědčivý důkaz |
+  |---|---|---|
+  | 1. Scope & accepted behavior | Reservation domain, role, hranici systému; 1 vybranou operaci z Create / Availability / Confirm / Cancel; business invariant; relevantní změnu Approval z C02 | Specification v0.2, pre/postconditions, statechart, konkrétní verification example |
+  | 2. Architecture | AS-IS → TO-BE; driver, odpovědnosti a jejich vlastníky; statický + dynamický pohled; vybranou alternativu a ADR | Architecture views, ADR a ukázání implementace odpovídající rozhodnutí |
+  | 3. Detailed Design | Jednu jednotku z C05: kontrakt, klíčovou metodu/algoritmus, hranici, větve a failure | DD + cesta v kódu + relevantní unit/component test |
+  | 4. Verification & Evidence | Jeden pozitivní, jeden relevantní negativní/hraniční případ; expected vs observed; baseline verifikace; význam C04 quality criterion | Spuštěný test, log/výsledek, přesně definované oracle a podmínky měření |
+  | 5. C06 Findings & Engineering Decision | Nejdůležitější kandidátní nález a jeho technické ověření; uzavření nebo otevřená akce | C06 assessment, disposition, issue/commit, evidence ověření opravy |
+
+Ukázka jedné technické argumentační linie
+
+  >> REQ-04 + BR-02: pro stejný exclusive Resource nesmí vzniknout dvě konfliktní CONFIRMED
+  >> rezervace → Architecture: rozhodnutí o potvrzení vlastní Reservation Management a musí mít
+  >> chráněnou consistency boundary → Detailed Design: při Confirm se validuje stav, zjišťuje
+  >> konflikt, atomicky mění stav a ukládá výsledek → Evidence: sousední intervaly povoleny;
+  >> konflikt odmítnut; souběžný pokus nevede ke dvěma potvrzením → C06 finding: pokud review
+  >> odhalilo nechráněnou admin/approval cestu, doložit závěr a akci.
+
+Pozor: hypotetická admin override nebo přímý DB import nejsou automaticky povinnou funkcí vaší
+aplikace. Jako riziko je zvažujte jen tehdy, pokud taková cesta skutečně existuje nebo je
+v projektu realisticky plánována. Nedělejte z příkladů nové povinnosti C01–C05.
+
+Hodnocení CP1 – jediná jednoduchá rubrika, max. 20 bodů
+
+  | Kritérium | Co se hodnotí | Maximum |
+  |---|---|---|
+  | Scope & Requirements | Jasnost domény, přijaté požadavky a jejich skutečný význam | 5 |
+  | Architecture & Detailed Design | Zdůvodněná struktura, odpovědnosti, ADR, konkrétní návrh jednotky | 5 |
+  | Working Solution & Evidence | Reálný stav aplikace, testy, ověření tvrzení, konzistence artefaktů | 5 |
+  | Engineering Review & Defence | Ověření C06 findings, rozhodnutí, reakce a schopnost obhájit | 5 |
+
+  | Body | Jednotný význam |
+  |---|---|
+  | 5 | Přesvědčivé a doložené, tým rozumí důsledkům |
+  | 4 | Dobré, jen menší konkrétní mezery |
+  | 3 | Použitelný základ, významnější slabiny |
+  | 2 | Zásadní mezery / nepřesvědčivá evidence |
+  | 1 | Pouze náznak, převážně tvrzení |
+  | 0 | Chybí nebo nelze doložit |
+
+Body za jednotlivá kritéria zaznamená cvičící po obhajobě. Project Status Report není pátým
+bodovaným kritériem ani novým checkpointem.
+
+--------------------------------------------------------------------------------
+B. Risk Assessment – připravit pro příští cvičení
+
+Účel: zjistit, co nejistého může ohrozit dokončení a kvalitu vašeho projektu, rozhodnout, jak
+s tím naložíte, a podložit skutečný stav. Používejte aktuální C06 findings, plánované práce,
+závislosti, kapacity a quality evidence. Nevypisujte obecný seznam rizik bez vazby na váš projekt.
+
+B1. Co je riziko a co není
+
+  | Pojem | Definice | Konkrétní příklad |
+  |---|---|---|
+  | Risk | Nejistá událost, která by mohla ovlivnit cíl | Když jediný člen týmu nebude dostupný, integrace se může opozdit |
+  | Issue | Problém, který již nastal | Build aktuálně nejde spustit na druhém stroji |
+  | Defect / Finding | Prokázaná neshoda s přijatým tvrzením | Konflikt rezervací se v reálném testu neodmítá |
+  | Assumption | Předpoklad považovaný za pravdivý bez jistoty | Externí služba bude dostupná během obhajoby |
+
+B2. Projděte nejméně tři oblasti projektu
+
+  | Kategorie | Na co se dívat | Příklad rizika |
+  |---|---|---|
+  | Scope / Requirements | Nejasné pravidlo, změna schvalování, chybné předpoklady | Nejednoznačná politika PENDING_APPROVAL vyvolá přepracování |
+  | Schedule / Integration | Milníky, závislosti, příliš pozdní integrace | Změny se spojí až před CP2 → nebude čas na opravy |
+  | People / Resources | Dostupnost, zastupitelnost, klíčové znalosti | Jedna osoba jediná zná konfiguraci DB |
+  | Technical / Quality | Invariants, stavové přechody, concurrency, quality criterion | Při paralelním potvrzení dojde k double booking |
+  | External dependency | Notification service, identity, databáze, prostředí | Nedostupnost služby zablokuje kritický scénář |
+  | Security / Privacy | Role, admin oprávnění, osobní údaje, logging | Příliš široká role umožní nepovolenou změnu rezervace |
+  | Release / Operation | Reprodukovatelný build, konfigurace, rollback, monitoring | Aplikace mimo vývojový notebook nepoběží |
+
+Rozsah: minimálně 4 konkrétní rizika z alespoň 3 kategorií. Pro každé napište
+příčina → nejistá událost → důsledek; příklad: „Jediný vývojář spravuje DB konfiguraci → při jeho
+absenci nikdo nerozběhne aplikaci → demonstrace a integrace se zpozdí."
+
+B3. Jednotná klasifikace (před ošetřením)
+
+  | Likelihood (L) | Význam |
+  |---|---|
+  | 1 – Low | Událost je méně pravděpodobná; není pro ni konkrétní známý signál nebo je málo realistická |
+  | 2 – Medium | Reálná možnost; existují indicie, závislost či nejistota |
+  | 3 – High | Velmi reálná možnost; silné varovné signály nebo opakovaná zkušenost |
+
+  | Impact (I) | Význam pro projekt |
+  |---|---|
+  | 1 – Low | Malý, lokální dopad, řešitelný bez ovlivnění zásadního cíle |
+  | 2 – Medium | Významný zásah do rozsahu, termínu, kvality nebo kapacity, ale s realistickou obnovou |
+  | 3 – High | Ohrožuje zásadní business invariant, použitelnou demonstraci, release nebo klíčový termín |
+
+B4. Priority matrix
+
+  | L \ I      | 1 – Low    | 2 – Medium | 3 – High   |
+  |------------|------------|------------|------------|
+  | 1 – Low    | LOW (1)    | LOW (2)    | MEDIUM (3) |
+  | 2 – Medium | LOW (2)    | MEDIUM (4) | HIGH (6)   |
+  | 3 – High   | MEDIUM (3) | HIGH (6)   | HIGH (9)   |
+
+Skóre L × I pomáhá třídit pozornost; není to přesná předpověď. Zásadní business/safety/security
+důsledek může vyžadovat reakci i při nízké pravděpodobnosti. Uveďte krátké zdůvodnění volby L a I.
+
+B5. Risk response & residual risk
+
+  | Strategie | Co znamená | Příklad |
+  |---|---|---|
+  | AVOID | Změnit plán nebo rozsah tak, aby scénář rizika nevznikl | Nepoužívat v CP2 nespolehlivou externí integraci, není-li nutná |
+  | MITIGATE | Snížit pravděpodobnost nebo dopad konkrétním opatřením | Automatický integration test + owner failover |
+  | TRANSFER / SHARE | Přenést či sdílet část následků/odpovědností s jinou stranou, ne zbavit se odpovědnosti za projekt | Zajistit záložní provozní službu s jasným SLA, pokud je dostupná |
+  | ACCEPT | Vědomě přijmout zbývající riziko s důvodem a s monitoringem; může být s contingency rezervou | Malé vizuální omezení UI je přijatelné pro CP2 |
+
+Initial risk = riziko před opatřením. Expected residual = odhad po plánovaném opatření. Actual
+residual = teprve po zavedení a ověření účinnosti. Napište NOT VERIFIED, pokud opatření ještě
+nebylo ověřeno; nesnižujte skóre jen na základě plánu. Acceptance owner = konkrétní člen/tým,
+který rozhodnutí zdůvodňuje. Trigger = pozorovatelný signál, kdy je potřeba riziko znovu řešit.
+
+B6. Kompletně vyplněný příklad
+
+  | Položka | Příklad – capacity / people risk |
+  |---|---|
+  | ID & statement | R-02: DB konfiguraci zná jen jeden člen → při nepřítomnosti nejde reprodukovat build/test → zpoždění integrace a CP2 |
+  | Initial L/I / priority | L=2, I=3 → HIGH (6); pouze jedna osoba aplikaci úspěšně spustila |
+  | Strategy | MITIGATE – omezit single point of failure |
+  | Treatment & owner / due | Druhý člen provede čistý checkout + build/test podle README; owner: Eva; do [datum] |
+  | Treatment evidence | Link na úspěšný build/test na druhém stroji; aktualizovaný README |
+  | Expected residual | L=1, I=2 → LOW (2), pokud zastupitelnost funguje |
+  | Actual residual | NOT VERIFIED, dokud nebyl reálně proveden clean checkout |
+  | Acceptance & contingency | Po ověření přijme team lead; při selhání použít předem připravené prostředí |
+  | Monitoring / trigger | Přezkoumat při změně konfigurace; trigger: clean build selže nebo zástupce není dostupný |
+
+B7. Vyplňte své záznamy
+
+(Originál má na tomto místě interaktivní formulář na rizika; tady vynecháno. Fungoval lokálně
+v prohlížeči, data se nikam neposílala ani trvale neukládala, a výsledek se kopíroval jako
+Markdown do existující docs/evidence-and-evolution.md. U každého záznamu zachovejte původní
+i zbytkové riziko a evidence status.)
+
+--------------------------------------------------------------------------------
+C. Project Status Report – na příští cvičení
+
+Účel: podat krátkou, rozhodnutelnou zprávu o skutečném stavu projektu. V automobilovém projektu by
+status report neměl být výčet aktivit, ale doložený stav rozsahu, dodávky, termínů, zdrojů, rizik
+a konkrétních potřebných rozhodnutí. Použijte připravenou editovatelnou PPTX o šesti slidech
+(samostatný soubor v balíčku). Vyplňujte jen reálné údaje – neodhadujte procenta bez jasně
+definovaného základu.
+
+Prezentace: 5–7 minut + dotazy. Reporting baseline = datum a commit/tag, vůči nimž jsou údaje
+pravdivé. Technické detaily a kód patří do části A; tady ukazujte jejich skutečný projektový dopad.
+
+  | PPTX slide | Co přesně vyplnit | Důkaz a typická otázka |
+  |---|---|---|
+  | 01 Executive Status | Projekt/tým; reporting baseline; celkově ON TRACK / AT RISK / OFF TRACK; jediný hlavní závěr; potřebné rozhodnutí | Co by vedení mělo rozhodnout dnes a na základě čeho? |
+  | 02 Scope & Delivery | Create, Availability, Confirm/Approval, Cancel, business rules, relevantní quality concern: SPECIFIED / DESIGNED / IMPLEMENTED / VERIFIED + skutečné mezery | Dokument vs. code vs. test: neschovávejte chybějící verifikaci za „hotovo" |
+  | 03 Schedule & Resources | Zbývající work packages; owner, termín, plán vs. skutečnost/forecast; kapacity a critical dependencies | Který úkol je kritický pro CP2? Kdo jej vlastní? |
+  | 04 Top Risks & Issues | Max. 3 nejdůležitější rizika z B: initial L/I, response, stav opatření, expected/actual residual, trigger; odděleně issues | Co se zlepšilo díky reálnému opatření? Co zatím není prokázáno? |
+  | 05 Next Action Plan | 3–5 konkrétních actions, owner, due, evidencí ověřitelný Definition of Done, související finding/risk | Co skutečně vznikne do dalšího týdne? |
+  | 06 Decision & Outlook | Co je prokazatelně dokončeno, co není, největší omezení, forecast a požadované rozhodnutí | Je navržený plán realistický s aktuální kapacitou? |
+
+Pro vyplnění slidu 02: Do každého pole Specified / Designed / Implemented / Verified zapište
+YES / PARTLY / NO a přiložte odkaz na důkaz či mezeru. Pokud je konkrétní položka skutečně
+nepoužitelná, uveďte N/A s důvodem; neoznačujte nic automaticky za Verified. Otevřený prokázaný
+defect patří i do seznamu issues, nikoli pouze mezi budoucí rizika.
+
+Pokud plán nebo odhad dosud neexistuje, přiznejte planning gap a uveďte, kdo a do kdy jej
+odstraní; nevymýšlejte zpětně termíny ani procenta dokončení.
+
+Šablona má na slidu 05 čtyři řádky pro priority. Ukažte čtyři nejdůležitější akce; případnou další
+akci zachovejte v repozitáři/plánu a odkažte na ni, nezahlcujte slide.
+
+Jednotná klasifikace RAG
+
+  | Status | Kdy ho použít |
+  |---|---|
+  | GREEN / ON TRACK | Dohodnutý rozsah a termín jsou realistické, kritické důkazy existují, žádné zásadní otevřené překážky |
+  | AMBER / AT RISK | Dodání je možné, ale důležitá nejistota, kapacitní nebo technická překážka vyžaduje opatření či rozhodnutí |
+  | RED / OFF TRACK | Při současném plánu nelze splnit zásadní rozsah/termín/kvalitu bez změny rozhodnutí či zásahu |
+
+Co znamená sloupec „Verified" na status slidu?
+
+Specified: přijaté a konzistentní chování ve specifikaci v0.2. Designed: zodpovědnost, interaction
+a relevantní DD jsou explicitní a aktuální. Implemented: funkce v identifikovaném commitu skutečně
+existuje a lze ji spustit. Verified: existuje odpovídající evidence s nezávislým oracle,
+očekávaným a pozorovaným výsledkem; pokud test nebyl spuštěn nebo neověřuje claim, neoznačujte
+Verified.
+
+Příklad překladu technického findingu do statusu
+
+  >> Technical: „C06 finding F2: dva konfliktní confirm requesty mohou oba skončit CONFIRMED."
+  >> Project impact: „Confirm je Implemented, ale NOT VERIFIED vůči concurrency claimu. Risk R-03
+  >> HIGH; mitigation: transactional guard + concurrency integration test; owner Petr, due 4. 11.;
+  >> expected residual MEDIUM, actual residual NOT VERIFIED; overall project AT RISK."
+
+--------------------------------------------------------------------------------
+Definition of Done / co musí existovat
+
+  | Čas | Povinný výstup | Kam patří |
+  |---|---|---|
+  | Dnes po C06 | Disposition ověřených candidate findings, důkazy a otevřené actions | C06 assessment + docs/evidence-and-evolution.md / issues |
+  | Před příštím C08 | A: Technické argumenty a připravené evidence ze skutečné baseline | Repo + přehled během obhajoby |
+  | Před příštím C08 | B: Nejméně 4 risks, nejméně 3 kategorie, complete response + residual/monitoring | docs/evidence-and-evolution.md |
+  | Před příštím C08 | C: Vyplněných 6 slidů status reportu, konzistentních s A a B | PPTX + reporting baseline / repo |
+  | Po prezentaci | Jedno společné hodnocení CP1 max. 20 bodů podle čtyř technických kritérií | Záznam cvičícího |
+
+Kontrola konzistence: stejný commit/tag v A i C; stejné findings C06; žádné „verified" bez
+spustitelného důkazu; neuzavřená závažná chyba se projeví v RAG a action plánu; opatření
+s neověřeným výsledkem nezpůsobuje automatické snížení actual residual risk.
+
+Podklady: aktuální zadání C01 a C02; C03 Architecture a AS-IS mapping; C06 Internal Evidence
+Assessment v4 a jeho assessment form; L05 Detailed Design; L06 Verification & Evidence. Přesné
+znění C04/C05 je v tomto balíčku převzato pouze v rozsahu povinností ověřovaných v C06 –
+nepřidávají se další požadavky.

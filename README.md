@@ -14,6 +14,7 @@ Reservation system for booking a companion for social activities (non-sexual com
 - [Specification — baseline v0.2](docs/specification.md)
 - [Architecture and decisions](docs/architecture-and-decisions.md)
 - [Evidence and evolution](docs/evidence-and-evolution.md)
+- [Technical Design Review — C07–C08 defence guide](docs/technical-design-review.md)
 
 ## Tech stack
 
@@ -109,6 +110,7 @@ cd src && python manage.py expire_pending_approvals   # prints expired=<n>
 
 ```bash
 scripts/demo_c02.sh      # from the repository root, with the venv installed
+scripts/demo_c08.sh      # C08 defence: the REQ-04/BR-02 evidence tests + architecture check
 ```
 
 The script migrates, seeds demo data, starts a server on port 8765 and runs one successful and one
