@@ -534,12 +534,12 @@ stronger evidence than they are:
 
 ## C07–C08 Risk Assessment (part B)
 
-**Reporting baseline:** tag `c08-review`, content commit `ad2cee7` on `main`, 2026-11-09 (the tag points at the follow-up commit that only records this hash) — the same baseline as
+**Reporting baseline:** tag `c08-review`, content commit `8eaeb40` on `main`, 2026-11-09 (the tag points at the follow-up commit that only records this hash) — the same baseline as
 part A ([technical-design-review.md](technical-design-review.md#reporting-baseline)). `git diff --stat
 51111fa c08-review -- src scripts requirements.txt pytest.ini` lists only the new `scripts/demo_c08.sh`,
 so the code, the tests and the dependency list are the ones C06 assessed. The commands recorded
 [below](#commands-run-for-this-section) were run on 2026-11-08 from the repository root on a clean tree
-at `c5d90d9`, one pytest process at a time; `c5d90d9` → `ad2cee7` changes only documents, and on `ad2cee7` (2026-11-09) `pytest` → 80 passed, `test_concurrency.py` → 2 passed, `scripts/demo_c08.sh` → exit 0; the incident in [I-01](#issues-already-happened) happened
+at `c5d90d9`, one pytest process at a time; `c5d90d9` → `8eaeb40` changes only documents, and on `8eaeb40` (2026-11-09) `pytest` → 80 passed, `test_concurrency.py` → 2 passed, `scripts/demo_c08.sh` → exit 0; the incident in [I-01](#issues-already-happened) happened
 outside them.
 
 **Naming:** R-01 … R-04 here are risks. They are not the system responsibilities R-1 … R-7 in

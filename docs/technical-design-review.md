@@ -11,12 +11,12 @@ assessors found and what we decided).
 
 | Item | Value |
 |---|---|
-| **Reporting baseline** | tag **`c08-review`**, content commit `ad2cee7`, 2026-11-09 (the tag points at the follow-up commit that only records this hash in parts A, B and C) — one baseline for part A, part B (risk register) and part C (`docs/c08-project-status.pptx`) |
+| **Reporting baseline** | tag **`c08-review`**, content commit `8eaeb40`, 2026-11-09 (the tag points at the follow-up commit that only records this hash in parts A, B and C) — one baseline for part A, part B (risk register) and part C (`docs/c08-project-status.pptx`) |
 | **C06 assessed baseline** | commit `51111fa` (assessed by Office Reservation System, 2026-10-22) |
-| **Old → new** | `git diff --stat 51111fa c08-review -- src scripts/check_architecture.py requirements.txt pytest.ini` is empty (checked against `ad2cee7`): code, tests, checker, dependencies and pytest configuration are the same as in the assessed baseline. No C06 finding was fixed in code, because none is a nonconformity ([step 5](#step-5--c06-findings-and-our-decision)) |
+| **Old → new** | `git diff --stat 51111fa c08-review -- src scripts/check_architecture.py requirements.txt pytest.ini` is empty (checked against `8eaeb40`): code, tests, checker, dependencies and pytest configuration are the same as in the assessed baseline. No C06 finding was fixed in code, because none is a nonconformity ([step 5](#step-5--c06-findings-and-our-decision)) |
 | **Environment** | Python 3.14.7, Django 5.2.18, DRF 3.18.3, pytest 8.4.2 |
-| **Whole suite** | `.venv/bin/python -m pytest -q` → **80 passed** (on `ad2cee7`, clean tree, 2026-11-09; also 80 passed on `51111fa`) |
-| **Demo** | `scripts/demo_c08.sh` → exit 0 on `ad2cee7`, 2026-11-09: (a) 3 passed · (b) 2 passed · (c) 2 passed · (d) 12 passed · (e) 11 passed + `Architecture rules hold` |
+| **Whole suite** | `.venv/bin/python -m pytest -q` → **80 passed** (on `8eaeb40`, clean tree, 2026-11-09; also 80 passed on `51111fa`) |
+| **Demo** | `scripts/demo_c08.sh` → exit 0 on `8eaeb40`, 2026-11-09: (a) 3 passed · (b) 2 passed · (c) 2 passed · (d) 12 passed · (e) 11 passed + `Architecture rules hold` |
 
 **Note:** do not run any other pytest in this checkout at the same time. The test
 database is one file, `src/test_db.sqlite3` ([`settings.py:58`](../src/config/settings.py#L58)), so
